@@ -115,14 +115,21 @@ pub struct Track {
     /// Loaded lazily via the metadata worker pool.
     #[serde(skip)]
     pub metadata: Option<TrackMetadata>,
-    /// Set when the file could not be found or opened during playback.
+    /// Set when the file could not be found during playback.
     #[serde(skip)]
     pub missing: bool,
+    /// Set when the file exists but could not be decoded.
+    #[serde(skip)]
+    pub broken: bool,
 }
 
 impl Track {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Track { path: path.into(), metadata: None, missing: false }
+        Track { path: path.into(), metadata: None, missing: false, broken: false }
+    }
+
+    pub fn is_playable(&self) -> bool {
+        !self.missing && !self.broken
     }
 
     /// "Artist - Title" when tags are known, otherwise the file name.
@@ -146,6 +153,19 @@ impl Track {
 
     pub fn duration(&self) -> Option<Duration> {
         self.metadata.as_ref().map(|m| m.duration).filter(|d| !d.is_zero())
+    }
+}
+
+/// Address of a track in a group tree: subgroup indices from the root, then the track index.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct TrackRef {
+    pub group: Vec<usize>,
+    pub index: usize,
+}
+
+impl TrackRef {
+    pub fn new(group: Vec<usize>, index: usize) -> Self {
+        TrackRef { group, index }
     }
 }
 
@@ -204,6 +224,43 @@ impl Group {
         self.walk(&mut |g| max = max.max(g.id));
         max
     }
+
+    /// The descendant at `path` (subgroup indices from this group).
+    pub fn group_at(&self, path: &[usize]) -> Option<&Group> {
+        path.iter().try_fold(self, |g, &i| g.subgroups.get(i))
+    }
+
+    pub fn group_at_mut(&mut self, path: &[usize]) -> Option<&mut Group> {
+        path.iter().try_fold(self, |g, &i| g.subgroups.get_mut(i))
+    }
+
+    pub fn track(&self, r: &TrackRef) -> Option<&Track> {
+        self.group_at(&r.group)?.tracks.get(r.index)
+    }
+
+    pub fn track_mut(&mut self, r: &TrackRef) -> Option<&mut Track> {
+        self.group_at_mut(&r.group)?.tracks.get_mut(r.index)
+    }
+
+    /// Every track in this tree, depth-first in playlist order (own tracks before subgroups').
+    pub fn track_refs(&self) -> Vec<TrackRef> {
+        fn collect(g: &Group, path: &mut Vec<usize>, out: &mut Vec<TrackRef>) {
+            out.extend((0..g.tracks.len()).map(|i| TrackRef::new(path.clone(), i)));
+            for (i, sub) in g.subgroups.iter().enumerate() {
+                path.push(i);
+                collect(sub, path, out);
+                path.pop();
+            }
+        }
+        let mut out = Vec::new();
+        collect(self, &mut Vec::new(), &mut out);
+        out
+    }
+
+    /// Finds a track by file path, preferring the first match in playlist order.
+    pub fn find_path(&self, path: &std::path::Path) -> Option<TrackRef> {
+        self.track_refs().into_iter().find(|r| self.track(r).is_some_and(|t| t.path == path))
+    }
 }
 
 #[cfg(test)]
@@ -237,6 +294,18 @@ mod tests {
         root.walk(&mut |g| ids.push((g.name.clone(), g.id)));
         assert_eq!(ids, vec![("Root".into(), 1), ("Rock".into(), 2), ("Prog".into(), 3)]);
         assert_eq!(root.max_id(), 3);
+    }
+
+    #[test]
+    fn addresses_tracks_by_path() {
+        let root = tree();
+        let refs = root.track_refs();
+        let names: Vec<_> = refs.iter().map(|r| root.track(r).unwrap().file_name()).collect();
+        assert_eq!(names, vec!["a.mp3", "b.mp3", "c.mp3", "d.mp3"]);
+        assert_eq!(refs[3], TrackRef::new(vec![0, 0], 0));
+        assert_eq!(root.group_at(&[0, 0]).unwrap().name, "Prog");
+        assert!(root.group_at(&[1]).is_none());
+        assert_eq!(root.find_path(std::path::Path::new("c.mp3")), Some(TrackRef::new(vec![0], 1)));
     }
 
     #[test]

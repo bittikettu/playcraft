@@ -6,3 +6,4 @@ pub mod library;
 pub mod log_ring;
 pub mod model;
 pub mod paths;
+pub mod ui;

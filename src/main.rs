@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use mp3blaster_rs::audio::AudioConfig;
-use mp3blaster_rs::{headless, library, log_ring, paths};
+use mp3blaster_rs::audio::{AudioConfig, AudioHandle};
+use mp3blaster_rs::ui::app::App;
+use mp3blaster_rs::{headless, library, log_ring, paths, ui};
 
 #[derive(Parser, Debug)]
 #[command(name = "mp3blaster-rs", version, about = "Terminal audio player in the spirit of MP3Blaster")]
@@ -47,5 +48,7 @@ fn main() -> anyhow::Result<()> {
     if cli.headless {
         return headless::run(tracks, config);
     }
-    anyhow::bail!("the TUI is not implemented yet; run with --headless <files>")
+    let audio = AudioHandle::spawn(config);
+    let mut app = App::new(audio, App::root_from_files(tracks));
+    ui::run(&mut app)
 }
