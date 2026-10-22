@@ -1,0 +1,7 @@
+* text=auto
+*.mp3 binary
+*.flac binary
+*.ogg binary
+*.wav binary
+*.m4a binary
+
