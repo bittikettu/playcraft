@@ -119,7 +119,10 @@ mod tests {
         }
         std::fs::write(dir.path().join("1.ogg"), b"").unwrap();
         let files = collect_audio_files(dir.path());
-        let names: Vec<_> = files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        let names: Vec<_> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
         assert_eq!(names, vec!["1.ogg", "2.flac", "10.mp3"]);
     }
 }

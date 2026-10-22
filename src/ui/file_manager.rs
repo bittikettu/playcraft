@@ -57,7 +57,8 @@ impl FileManager {
                 // Fall back to the drive list so the user is never stuck.
                 if self.location != Location::Roots {
                     self.location = Location::Roots;
-                    self.entries = fs_browser::list(&Location::Roots, self.show_hidden).unwrap_or_default();
+                    self.entries =
+                        fs_browser::list(&Location::Roots, self.show_hidden).unwrap_or_default();
                 }
             }
         }
@@ -154,9 +155,17 @@ impl FileManager {
     /// The selection in listing order, or the entry under the cursor if nothing is selected.
     pub fn take_selection(&mut self) -> Vec<FsEntry> {
         let picked: Vec<FsEntry> = if self.selected.is_empty() {
-            self.current().filter(|e| e.is_selectable()).cloned().into_iter().collect()
+            self.current()
+                .filter(|e| e.is_selectable())
+                .cloned()
+                .into_iter()
+                .collect()
         } else {
-            self.entries.iter().filter(|e| self.selected.contains(&e.path)).cloned().collect()
+            self.entries
+                .iter()
+                .filter(|e| self.selected.contains(&e.path))
+                .cloned()
+                .collect()
         };
         self.selected.clear();
         picked

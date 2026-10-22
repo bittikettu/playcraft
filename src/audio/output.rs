@@ -44,7 +44,11 @@ pub fn list_devices() -> Result<Vec<String>, OutputError> {
     let mut names = Vec::new();
     for device in host.output_devices()? {
         let name = device.to_string();
-        let marker = if Some(&name) == default.as_ref() { " (default)" } else { "" };
+        let marker = if Some(&name) == default.as_ref() {
+            " (default)"
+        } else {
+            ""
+        };
         names.push(format!("{name}{marker}"));
     }
     Ok(names)
@@ -71,7 +75,11 @@ pub fn choose_device(preferred: Option<&str>) -> Result<DeviceChoice, OutputErro
     };
     let config = device.default_output_config()?;
     let name = device.to_string();
-    Ok(DeviceChoice { device, config, name })
+    Ok(DeviceChoice {
+        device,
+        config,
+        name,
+    })
 }
 
 impl DeviceChoice {
@@ -87,7 +95,11 @@ impl DeviceChoice {
     }
 
     /// Builds and starts the stream. Faults are reported on `faults`.
-    pub fn start(self, renderer: Renderer, faults: Sender<StreamFault>) -> Result<Output, OutputError> {
+    pub fn start(
+        self,
+        renderer: Renderer,
+        faults: Sender<StreamFault>,
+    ) -> Result<Output, OutputError> {
         let format = self.format();
         let config: StreamConfig = self.config.config();
         let stream = match self.config.sample_format() {
@@ -108,7 +120,11 @@ impl DeviceChoice {
             format.channels,
             self.config.sample_format()
         );
-        Ok(Output { _stream: stream, format, name: self.name })
+        Ok(Output {
+            _stream: stream,
+            format,
+            name: self.name,
+        })
     }
 }
 

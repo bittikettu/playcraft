@@ -11,7 +11,11 @@ const VOLUME_RANGE_DB: f32 = 60.0;
 /// Maps a 0.0–1.0 volume slider position to a linear gain on a logarithmic (dB) curve.
 pub fn volume_to_gain(volume: f32) -> f32 {
     let v = volume.clamp(0.0, 1.0);
-    if v <= 0.0 { 0.0 } else { 10f32.powf(VOLUME_RANGE_DB * (v - 1.0) / 20.0) }
+    if v <= 0.0 {
+        0.0
+    } else {
+        10f32.powf(VOLUME_RANGE_DB * (v - 1.0) / 20.0)
+    }
 }
 
 #[derive(Debug)]
@@ -62,7 +66,8 @@ impl Shared {
     pub fn set_volume(&self, volume: f32) {
         let volume = volume.clamp(0.0, 1.0);
         self.volume_bits.store(volume.to_bits(), Ordering::Relaxed);
-        self.gain_bits.store(volume_to_gain(volume).to_bits(), Ordering::Relaxed);
+        self.gain_bits
+            .store(volume_to_gain(volume).to_bits(), Ordering::Relaxed);
     }
 
     pub fn volume(&self) -> f32 {
@@ -87,7 +92,8 @@ impl Shared {
     }
 
     pub fn set_position(&self, position: Duration) {
-        self.position_ms.store(position.as_millis() as u64, Ordering::Relaxed);
+        self.position_ms
+            .store(position.as_millis() as u64, Ordering::Relaxed);
     }
 
     pub fn position(&self) -> Duration {
@@ -95,7 +101,8 @@ impl Shared {
     }
 
     pub fn set_duration(&self, duration: Duration) {
-        self.duration_ms.store(duration.as_millis() as u64, Ordering::Relaxed);
+        self.duration_ms
+            .store(duration.as_millis() as u64, Ordering::Relaxed);
     }
 
     pub fn duration(&self) -> Duration {

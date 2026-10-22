@@ -21,13 +21,20 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
     let mut title = vec![Span::styled(" ", theme.border)];
     if focused {
         for (action, label) in hints {
-            title.push(Span::styled(format!("[{}]", km.hint(Context::Playlist, action)), theme.key));
+            title.push(Span::styled(
+                format!("[{}]", km.hint(Context::Playlist, action)),
+                theme.key,
+            ));
             title.push(Span::styled(format!(" {label}  "), theme.title));
         }
     } else {
         title.push(Span::styled("Playlist ", theme.title));
     }
-    let block = Block::bordered().border_style(theme.border).style(theme.base).title(Line::from(title));
+    let block = Block::bordered()
+        .border_set(app.symbols.border)
+        .border_style(theme.border)
+        .style(theme.base)
+        .title(Line::from(title));
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.height == 0 || inner.width == 0 {
@@ -36,19 +43,39 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
 
     let group = app.current_group();
     let crumb = app.breadcrumb().join(app.symbols.breadcrumb);
-    let header = format!("Playlist: {crumb} ({} tracks)", group.total_tracks());
+    let mut header = format!("Playlist: {crumb} ({} tracks)", group.total_tracks());
+    if let Some(filter) = &app.filter {
+        header.push_str(&format!("  [filter: {filter}]"));
+    }
     let width = inner.width as usize;
     f.render_widget(
-        Paragraph::new(Line::styled(super::truncate(&header, width, app.symbols.ellipsis), theme.title)),
+        Paragraph::new(Line::styled(
+            super::truncate(&header, width, app.symbols.ellipsis),
+            theme.title,
+        )),
         Rect { height: 1, ..inner },
     );
 
-    let list = Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner };
+    let list = Rect {
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
     let height = list.height as usize;
     if focused {
         app.list_height = height;
     }
     let rows = app.rows();
+    if rows.is_empty() && app.filter.is_some() {
+        f.render_widget(
+            Paragraph::new(Line::styled(
+                "  No matches. Esc clears the filter.",
+                theme.dim,
+            )),
+            list,
+        );
+        return;
+    }
     if rows.is_empty() {
         let hint = format!(
             "  Empty. Press {} to add files.",
@@ -75,7 +102,11 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
             Row::Group(g) => {
                 let sub = &group.subgroups[g];
                 let shuffle = if sub.shuffle { " ~shuffle" } else { "" };
-                (format!("[GRP] {}{shuffle}", sub.name), format!("({})", sub.total_tracks()), theme.group)
+                (
+                    format!("[GRP] {}{shuffle}", sub.name),
+                    format!("({})", sub.total_tracks()),
+                    theme.group,
+                )
             }
             Row::Track(t) => {
                 let track = &group.tracks[t];
@@ -84,7 +115,10 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
                 } else if track.broken {
                     "[BAD]".to_string()
                 } else {
-                    track.duration().map(|d| format!("[{}]", format_time(d))).unwrap_or_default()
+                    track
+                        .duration()
+                        .map(|d| format!("[{}]", format_time(d)))
+                        .unwrap_or_default()
                 };
                 let style = if !track.is_playable() {
                     theme.missing
@@ -99,7 +133,12 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
         if is_cursor {
             style = style.patch(theme.cursor);
         }
-        let body = justify(&text, &right, width.saturating_sub(number.len()), app.symbols.ellipsis);
+        let body = justify(
+            &text,
+            &right,
+            width.saturating_sub(number.len()),
+            app.symbols.ellipsis,
+        );
         lines.push(Line::styled(format!("{number}{body}"), style));
     }
     f.render_widget(Paragraph::new(lines), list);

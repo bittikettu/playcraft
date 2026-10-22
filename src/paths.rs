@@ -9,11 +9,15 @@ use std::path::{Path, PathBuf};
 pub const APP_DIR: &str = "mp3blaster-rs";
 
 fn xdg_dir(var: &str) -> Option<PathBuf> {
-    env::var_os(var).map(PathBuf::from).filter(|p| p.is_absolute())
+    env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
 }
 
 pub fn config_dir() -> Option<PathBuf> {
-    xdg_dir("XDG_CONFIG_HOME").or_else(dirs::config_dir).map(|d| d.join(APP_DIR))
+    xdg_dir("XDG_CONFIG_HOME")
+        .or_else(dirs::config_dir)
+        .map(|d| d.join(APP_DIR))
 }
 
 pub fn config_file() -> Option<PathBuf> {
@@ -38,7 +42,9 @@ pub fn log_file() -> Option<PathBuf> {
 
 /// Expands a leading `~` to the user's home directory.
 pub fn expand_tilde(path: &str) -> PathBuf {
-    let rest = path.strip_prefix('~').filter(|r| r.is_empty() || r.starts_with(['/', '\\']));
+    let rest = path
+        .strip_prefix('~')
+        .filter(|r| r.is_empty() || r.starts_with(['/', '\\']));
     match (rest, dirs::home_dir()) {
         (Some(rest), Some(home)) => home.join(rest.trim_start_matches(['/', '\\'])),
         _ => PathBuf::from(path),
@@ -59,7 +65,9 @@ pub fn normalize(path: &Path) -> PathBuf {
         if path.is_absolute() {
             path.to_path_buf()
         } else {
-            env::current_dir().map(|cwd| cwd.join(path)).unwrap_or_else(|_| path.to_path_buf())
+            env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
         }
     })
 }
@@ -85,8 +93,16 @@ mod tests {
 
     #[test]
     fn app_dirs_end_with_app_name() {
-        assert!(config_file().unwrap().ends_with(Path::new(APP_DIR).join("config.toml")));
-        assert!(session_file().unwrap().ends_with(Path::new(APP_DIR).join("session.json")));
+        assert!(
+            config_file()
+                .unwrap()
+                .ends_with(Path::new(APP_DIR).join("config.toml"))
+        );
+        assert!(
+            session_file()
+                .unwrap()
+                .ends_with(Path::new(APP_DIR).join("session.json"))
+        );
     }
 
     #[cfg(windows)]

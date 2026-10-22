@@ -12,7 +12,11 @@ const NEST_SEPARATOR: &str = " / ";
 fn ensure_group(root: &mut Group, path: &str) -> Vec<usize> {
     let mut indices = Vec::new();
     let mut g = root;
-    for name in path.split(NEST_SEPARATOR).map(str::trim).filter(|n| !n.is_empty()) {
+    for name in path
+        .split(NEST_SEPARATOR)
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
         let i = match g.subgroups.iter().position(|s| s.name == name) {
             Some(i) => i,
             None => {
@@ -58,7 +62,12 @@ pub fn write(root: &Group, base: &Path) -> String {
             }
             for t in &g.tracks {
                 let secs = t.duration().map_or(-1, |d| d.as_secs() as i64);
-                let _ = write!(out, "#EXTINF:{secs},{}\r\n{}\r\n", t.display_name(), entry_for(base, &t.path));
+                let _ = write!(
+                    out,
+                    "#EXTINF:{secs},{}\r\n{}\r\n",
+                    t.display_name(),
+                    entry_for(base, &t.path)
+                );
             }
         }
         for sub in &g.subgroups {

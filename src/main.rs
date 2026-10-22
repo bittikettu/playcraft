@@ -3,12 +3,16 @@ use std::path::PathBuf;
 use clap::Parser;
 use mp3blaster_rs::audio::{AudioConfig, AudioHandle};
 use mp3blaster_rs::ui::app::{App, BannerLevel};
-use mp3blaster_rs::{headless, library, log_ring, paths, playlist, ui};
+use mp3blaster_rs::{config, headless, library, log_ring, paths, playlist, ui};
 
 #[derive(Parser, Debug)]
-#[command(name = "mp3blaster-rs", version, about = "Terminal audio player in the spirit of MP3Blaster")]
+#[command(
+    name = "mp3blaster-rs",
+    version,
+    about = "Terminal audio player in the spirit of MP3Blaster"
+)]
 struct Cli {
-    /// Audio files, folders or playlists to play.
+    /// Audio files, folders or playlists (.m3u, .m3u8, .pls, .blst) to play.
     paths: Vec<PathBuf>,
 
     /// Play without the TUI, controlled by line commands on stdin.
@@ -26,6 +30,27 @@ struct Cli {
     /// Initial volume in percent.
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
     volume: Option<u8>,
+
+    /// Use this config file instead of the default location.
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
+
+    /// Write a commented default config file (if none exists) and exit.
+    #[arg(long)]
+    write_default_config: bool,
+}
+
+fn write_default_config(path: Option<PathBuf>) -> anyhow::Result<()> {
+    let path = path
+        .or_else(paths::config_file)
+        .ok_or_else(|| anyhow::anyhow!("no config directory"))?;
+    anyhow::ensure!(!path.exists(), "{} already exists", path.display());
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, config::default_file_text())?;
+    println!("wrote {}", path.display());
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -38,21 +63,39 @@ fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if cli.write_default_config {
+        return write_default_config(cli.config);
+    }
 
-    let config = AudioConfig {
-        output_device: cli.device.clone(),
+    let loaded = config::load(cli.config.as_deref());
+    for w in &loaded.warnings {
+        log::warn!("{w}");
+    }
+    let cfg = loaded.config;
+    let audio_config = AudioConfig {
+        output_device: cli.device.clone().or_else(|| cfg.output_device()),
+        buffer_ms: cfg.general.audio_buffer_ms,
+        gapless: cfg.general.gapless_playback,
         volume: cli.volume.map_or(0.8, |v| f32::from(v) / 100.0),
-        ..AudioConfig::default()
     };
+
     if cli.headless {
-        return headless::run(library::expand_paths(&cli.paths), config);
+        return headless::run(library::expand_paths(&cli.paths), audio_config);
     }
     let startup = playlist::from_paths(&cli.paths);
-    let audio = AudioHandle::spawn(config);
+    let audio = AudioHandle::spawn(audio_config);
     let mut app = App::new(audio, startup.root);
     app.playlist_path = startup.playlist_path;
-    if let Some(err) = startup.errors.first() {
-        app.banner(BannerLevel::Error, err.clone());
+    let mut warnings = loaded.warnings;
+    warnings.extend(app.apply_config(&cfg));
+    warnings.extend(startup.errors);
+    if let Some(first) = warnings.first() {
+        let more = if warnings.len() > 1 {
+            format!(" (+{} more, see log)", warnings.len() - 1)
+        } else {
+            String::new()
+        };
+        app.banner(BannerLevel::Warning, format!("{first}{more}"));
     }
     ui::run(&mut app)
 }

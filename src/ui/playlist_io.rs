@@ -24,7 +24,10 @@ impl App {
                 self.engine.set_anchor(Vec::new());
                 self.request_all_metadata();
                 self.requeue();
-                self.banner(BannerLevel::Info, format!("Loaded {} ({n} tracks)", file_name(path)));
+                self.banner(
+                    BannerLevel::Info,
+                    format!("Loaded {} ({n} tracks)", file_name(path)),
+                );
             }
             Err(e) => self.banner(BannerLevel::Error, format!("{}: {e}", file_name(path))),
         }
@@ -44,7 +47,10 @@ impl App {
                 self.version += 1;
                 self.request_all_metadata();
                 self.requeue();
-                self.banner(BannerLevel::Info, format!("Imported {} as a group ({n} tracks)", file_name(path)));
+                self.banner(
+                    BannerLevel::Info,
+                    format!("Imported {} as a group ({n} tracks)", file_name(path)),
+                );
             }
             Err(e) => self.banner(BannerLevel::Error, format!("{}: {e}", file_name(path))),
         }
@@ -52,7 +58,10 @@ impl App {
 
     /// Asks for a file name to save the playlist to.
     pub fn start_save(&mut self) {
-        let default = self.playlist_path.clone().unwrap_or_else(|| self.save_dir().join("playlist.blst"));
+        let default = self
+            .playlist_path
+            .clone()
+            .unwrap_or_else(|| self.save_dir().join("playlist.blst"));
         self.prompt = Some(Prompt::new(
             PromptKind::SavePlaylist,
             "Save as (.blst/.m3u8/.m3u/.pls): ",
@@ -81,7 +90,11 @@ impl App {
         }
         if path.exists() && self.playlist_path.as_deref() != Some(path.as_path()) {
             let label = format!("{} exists. Overwrite?", file_name(&path));
-            self.prompt = Some(Prompt::new(PromptKind::Confirm(Confirm::Overwrite(path)), label, ""));
+            self.prompt = Some(Prompt::new(
+                PromptKind::Confirm(Confirm::Overwrite(path)),
+                label,
+                "",
+            ));
         } else {
             self.save_playlist_to(&path);
         }
@@ -91,13 +104,22 @@ impl App {
         match io::save(path, &self.root) {
             Ok(()) => {
                 self.playlist_path = Some(path.to_path_buf());
-                self.banner(BannerLevel::Info, format!("Saved {}", crate::paths::display(path)));
+                self.banner(
+                    BannerLevel::Info,
+                    format!("Saved {}", crate::paths::display(path)),
+                );
             }
-            Err(e) => self.banner(BannerLevel::Error, format!("Cannot save {}: {e}", file_name(path))),
+            Err(e) => self.banner(
+                BannerLevel::Error,
+                format!("Cannot save {}: {e}", file_name(path)),
+            ),
         }
     }
 }
 
 fn file_name(path: &Path) -> String {
-    path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }

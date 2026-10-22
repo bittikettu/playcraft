@@ -44,7 +44,11 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
             dirty = false;
         }
 
-        let timeout = if animating { frame_interval.saturating_sub(last_draw.elapsed()) } else { IDLE_POLL };
+        let timeout = if animating {
+            frame_interval.saturating_sub(last_draw.elapsed())
+        } else {
+            IDLE_POLL
+        };
         if event::poll(timeout)? {
             // Handle everything that is queued before the next redraw.
             loop {
@@ -80,7 +84,13 @@ pub(crate) mod tests {
 
     pub(crate) fn test_app(root: Group) -> App {
         let (tx, rx) = crossbeam_channel::unbounded();
-        let backend = ManualBackend { format: DeviceFormat { sample_rate: 48_000, channels: 2 }, renderers: tx };
+        let backend = ManualBackend {
+            format: DeviceFormat {
+                sample_rate: 48_000,
+                channels: 2,
+            },
+            renderers: tx,
+        };
         let audio = AudioHandle::spawn_with_backend(AudioConfig::default(), Box::new(backend));
         // Keep the renderer alive for the lifetime of the test.
         std::mem::forget(rx.recv().ok());
@@ -106,7 +116,11 @@ pub(crate) mod tests {
         let mut prog = Group::new(1, "70s Prog Rock");
         prog.tracks.push(Track::new("yes.flac"));
         root.subgroups.push(prog);
-        for name in ["Led Zeppelin - Black Dog.mp3", "Deep Purple - Highway Star.flac", "Pink Floyd - Money.ogg"] {
+        for name in [
+            "Led Zeppelin - Black Dog.mp3",
+            "Deep Purple - Highway Star.flac",
+            "Pink Floyd - Money.ogg",
+        ] {
             root.tracks.push(Track::new(name));
         }
         root.tracks[2].missing = true;
@@ -157,12 +171,25 @@ pub(crate) mod tests {
         let first = app.root.tracks[0].uid;
         app.play(first, true);
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !app.banner.as_ref().is_some_and(|b| b.text.contains("No playable")) {
+        while !app
+            .banner
+            .as_ref()
+            .is_some_and(|b| b.text.contains("No playable"))
+        {
             app.process_audio_events();
-            assert!(Instant::now() < deadline, "never halted; banner: {:?}", app.banner);
+            assert!(
+                Instant::now() < deadline,
+                "never halted; banner: {:?}",
+                app.banner
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(app.root.track_refs().iter().all(|r| app.root.track(r).unwrap().missing));
+        assert!(
+            app.root
+                .track_refs()
+                .iter()
+                .all(|r| app.root.track(r).unwrap().missing)
+        );
     }
 
     #[test]
@@ -204,7 +231,10 @@ pub(crate) mod tests {
     }
 
     fn fixture(name: &str) -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join(name)
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
     }
 
     fn type_keys(app: &mut App, keys: &[&str]) {
@@ -238,12 +268,19 @@ pub(crate) mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         while app.is_scanning() || app.root.tracks.iter().any(|t| t.metadata.is_none()) {
             app.process_background();
-            assert!(Instant::now() < deadline, "scan did not finish: {:?}", app.root.tracks);
+            assert!(
+                Instant::now() < deadline,
+                "scan did not finish: {:?}",
+                app.root.tracks
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         let names: Vec<_> = app.root.tracks.iter().map(|t| t.file_name()).collect();
         assert_eq!(names, vec!["01 tagged.flac", "02 sine.ogg", "single.mp3"]);
-        assert_eq!(app.root.tracks[0].display_name(), "Test Artist - Test Title");
+        assert_eq!(
+            app.root.tracks[0].display_name(),
+            "Test Artist - Test Title"
+        );
 
         type_keys(&mut app, &["Esc"]);
         assert_eq!(app.view, app::View::Playlist);
@@ -277,7 +314,10 @@ pub(crate) mod tests {
         }
         assert_eq!(app.root.tracks.len(), 10_000);
         // A frame (background work + full redraw) must stay well under 100 ms even in debug builds.
-        assert!(worst < Duration::from_millis(100), "slowest frame took {worst:?}");
+        assert!(
+            worst < Duration::from_millis(100),
+            "slowest frame took {worst:?}"
+        );
     }
 
     #[test]
@@ -292,10 +332,19 @@ pub(crate) mod tests {
 
         // Saving again under a different existing name asks first.
         std::fs::write(dir.path().join("other.m3u8"), "#EXTM3U\n").unwrap();
-        type_keys(&mut app, &["F4", "Ctrl+u", "o", "t", "h", "e", "r", ".", "m", "3", "u", "8", "Enter"]);
+        type_keys(
+            &mut app,
+            &[
+                "F4", "Ctrl+u", "o", "t", "h", "e", "r", ".", "m", "3", "u", "8", "Enter",
+            ],
+        );
         assert!(app.prompt.as_ref().is_some_and(|p| p.is_confirm()));
         type_keys(&mut app, &["y"]);
-        assert!(std::fs::read_to_string(dir.path().join("other.m3u8")).unwrap().contains("#EXTGRP:70s Prog Rock"));
+        assert!(
+            std::fs::read_to_string(dir.path().join("other.m3u8"))
+                .unwrap()
+                .contains("#EXTGRP:70s Prog Rock")
+        );
 
         // Load replaces the playlist; import adds it as a group.
         let mut app = test_app(Group::new(0, "Root"));
@@ -306,6 +355,47 @@ pub(crate) mod tests {
         assert_eq!(app.root.subgroups.len(), 2);
         assert_eq!(app.root.subgroups[1].name, "other");
         assert_eq!(app.root.total_tracks(), 8);
+    }
+
+    #[test]
+    fn search_filters_live_and_escape_clears() {
+        let mut app = test_app(sample_root());
+        type_keys(&mut app, &["/", "p", "u", "r"]);
+        assert_eq!(app.filter.as_deref(), Some("pur"));
+        let screen = render(&mut app, 100, 20);
+        assert!(screen.contains("Deep Purple"));
+        assert!(!screen.contains("Led Zeppelin"));
+        assert!(screen.contains("[filter: pur]"));
+        type_keys(&mut app, &["Enter"]);
+        assert!(app.prompt.is_none());
+        assert_eq!(app.rows().len(), 1);
+        type_keys(&mut app, &["Esc"]);
+        assert!(app.filter.is_none());
+        assert_eq!(app.rows().len(), 4);
+        // Escape while typing cancels the filter too.
+        type_keys(&mut app, &["/", "z", "Esc"]);
+        assert!(app.filter.is_none());
+    }
+
+    #[test]
+    fn config_applies_theme_charset_and_keys() {
+        let (cfg, warnings) = crate::config::parse(
+            "[ui]\ncharset = \"ascii\"\ncolor_theme = \"monochrome\"\n[keybindings]\nhelp = \"F10\"\n",
+        );
+        assert!(warnings.is_empty());
+        let mut app = test_app(sample_root());
+        assert!(app.apply_config(&cfg).is_empty());
+        assert_eq!(app.theme.name, "monochrome");
+        type_keys(&mut app, &["F10"]);
+        assert!(matches!(app.overlay, app::Overlay::Help { .. }));
+        type_keys(&mut app, &["Esc"]);
+        let screen = render(&mut app, 100, 20);
+        println!("{screen}");
+        assert!(
+            screen.is_ascii(),
+            "ascii charset must not draw box characters"
+        );
+        assert!(screen.contains("[F10] Help"));
     }
 
     #[test]

@@ -28,7 +28,10 @@ pub fn drives() -> Vec<Root> {
         .filter(|i| mask & (1 << i) != 0)
         .filter_map(|i| {
             let root = format!("{}:\\", char::from(b'A' + i));
-            let wide: Vec<u16> = std::ffi::OsStr::new(&root).encode_wide().chain([0]).collect();
+            let wide: Vec<u16> = std::ffi::OsStr::new(&root)
+                .encode_wide()
+                .chain([0])
+                .collect();
             // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call.
             let kind = match unsafe { GetDriveTypeW(wide.as_ptr()) } {
                 DRIVE_NO_ROOT_DIR => return None,
@@ -38,7 +41,10 @@ pub fn drives() -> Vec<Root> {
                 DRIVE_RAMDISK => "RAM disk",
                 _ => "Local disk",
             };
-            Some(Root { path: PathBuf::from(root), kind })
+            Some(Root {
+                path: PathBuf::from(root),
+                kind,
+            })
         })
         .collect()
 }

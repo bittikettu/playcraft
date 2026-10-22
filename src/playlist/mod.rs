@@ -24,9 +24,17 @@ pub fn from_paths(paths: &[PathBuf]) -> Startup {
             return match io::load(only) {
                 Ok(mut root) => {
                     root.name = "Root".into();
-                    Startup { root, playlist_path: Some(only.clone()), errors: Vec::new() }
+                    Startup {
+                        root,
+                        playlist_path: Some(only.clone()),
+                        errors: Vec::new(),
+                    }
                 }
-                Err(e) => Startup { root: Group::new(0, "Root"), playlist_path: None, errors: vec![format!("{}: {e}", only.display())] },
+                Err(e) => Startup {
+                    root: Group::new(0, "Root"),
+                    playlist_path: None,
+                    errors: vec![format!("{}: {e}", only.display())],
+                },
             };
         }
     }
@@ -34,7 +42,11 @@ pub fn from_paths(paths: &[PathBuf]) -> Startup {
     let mut errors = Vec::new();
     for path in paths {
         if path.is_dir() {
-            root.tracks.extend(library::collect_audio_files(path).into_iter().map(Track::new));
+            root.tracks.extend(
+                library::collect_audio_files(path)
+                    .into_iter()
+                    .map(Track::new),
+            );
         } else if is_playlist_file(path) {
             match io::load(path) {
                 Ok(group) => root.subgroups.push(group),
@@ -45,7 +57,11 @@ pub fn from_paths(paths: &[PathBuf]) -> Startup {
         }
     }
     root.renumber(0);
-    Startup { root, playlist_path: None, errors }
+    Startup {
+        root,
+        playlist_path: None,
+        errors,
+    }
 }
 
 /// Every track path of a playlist file, flattened in play order.

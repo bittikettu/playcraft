@@ -34,7 +34,8 @@ pub struct Resampler {
 impl Resampler {
     pub fn new(source: SourceFormat, device_rate: u32, device_channels: usize) -> Self {
         let work_channels = if source.channels <= 1 { 1 } else { 2 };
-        let fft = if source.sample_rate != device_rate && source.sample_rate > 0 && device_rate > 0 {
+        let fft = if source.sample_rate != device_rate && source.sample_rate > 0 && device_rate > 0
+        {
             match Fft::<f32>::new(
                 source.sample_rate as usize,
                 device_rate as usize,
@@ -55,7 +56,9 @@ impl Resampler {
             None
         };
         let trim_frames = fft.as_ref().map_or(0, |f| f.output_delay());
-        let resampled_len = fft.as_ref().map_or(0, |f| f.output_frames_max() * work_channels);
+        let resampled_len = fft
+            .as_ref()
+            .map_or(0, |f| f.output_frames_max() * work_channels);
         Resampler {
             source,
             device_rate,
@@ -190,7 +193,11 @@ impl Resampler {
         let ch = self.work_channels;
         out.reserve(frames.len() / ch * dev);
         for frame in frames.chunks_exact(ch) {
-            let (l, r) = if ch == 1 { (frame[0], frame[0]) } else { (frame[0], frame[1]) };
+            let (l, r) = if ch == 1 {
+                (frame[0], frame[0])
+            } else {
+                (frame[0], frame[1])
+            };
             if dev == 1 {
                 out.push((l + r) * 0.5);
             } else {
@@ -207,7 +214,11 @@ fn downmix(input: &[f32], channels: usize, work_channels: usize, out: &mut Vec<f
     let channels = channels.max(1);
     match (channels, work_channels) {
         (1, _) | (2, 2) => out.extend_from_slice(input),
-        (_, 1) => out.extend(input.chunks_exact(channels).map(|f| f.iter().sum::<f32>() / channels as f32)),
+        (_, 1) => out.extend(
+            input
+                .chunks_exact(channels)
+                .map(|f| f.iter().sum::<f32>() / channels as f32),
+        ),
         _ => {
             // Standard order: FL, FR, FC, LFE, (B|S)L, (B|S)R, ... LFE is dropped.
             let norm = 1.0 / (1.0 + 2.0 * SIDE_GAIN);
@@ -230,7 +241,8 @@ mod tests {
         let n = (f64::from(rate) * secs) as usize;
         let mut v = Vec::with_capacity(n * channels);
         for i in 0..n {
-            let s = (2.0 * std::f64::consts::PI * freq * i as f64 / f64::from(rate)).sin() as f32 * 0.5;
+            let s =
+                (2.0 * std::f64::consts::PI * freq * i as f64 / f64::from(rate)).sin() as f32 * 0.5;
             v.extend(std::iter::repeat_n(s, channels));
         }
         v
@@ -252,7 +264,10 @@ mod tests {
 
     #[test]
     fn upsamples_44k_to_48k_with_correct_length_and_pitch() {
-        let src = SourceFormat { sample_rate: 44_100, channels: 2 };
+        let src = SourceFormat {
+            sample_rate: 44_100,
+            channels: 2,
+        };
         let input = sine(44_100, 2, 2.0, 440.0);
         let mut r = Resampler::new(src, 48_000, 2);
         let mut out = Vec::new();
@@ -268,7 +283,10 @@ mod tests {
 
     #[test]
     fn same_rate_is_passthrough() {
-        let src = SourceFormat { sample_rate: 48_000, channels: 2 };
+        let src = SourceFormat {
+            sample_rate: 48_000,
+            channels: 2,
+        };
         let input = sine(48_000, 2, 0.1, 1000.0);
         let mut r = Resampler::new(src, 48_000, 2);
         let mut out = Vec::new();
@@ -280,21 +298,42 @@ mod tests {
     #[test]
     fn maps_mono_to_stereo_and_stereo_to_surround() {
         let mut out = Vec::new();
-        Resampler::new(SourceFormat { sample_rate: 48_000, channels: 1 }, 48_000, 2)
-            .process(&[0.25, -0.5], &mut out);
+        Resampler::new(
+            SourceFormat {
+                sample_rate: 48_000,
+                channels: 1,
+            },
+            48_000,
+            2,
+        )
+        .process(&[0.25, -0.5], &mut out);
         assert_eq!(out, vec![0.25, 0.25, -0.5, -0.5]);
 
         out.clear();
-        Resampler::new(SourceFormat { sample_rate: 48_000, channels: 2 }, 48_000, 6)
-            .process(&[0.1, 0.2], &mut out);
+        Resampler::new(
+            SourceFormat {
+                sample_rate: 48_000,
+                channels: 2,
+            },
+            48_000,
+            6,
+        )
+        .process(&[0.1, 0.2], &mut out);
         assert_eq!(out, vec![0.1, 0.2, 0.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]
     fn downmixes_surround_without_clipping() {
         let mut out = Vec::new();
-        Resampler::new(SourceFormat { sample_rate: 48_000, channels: 6 }, 48_000, 2)
-            .process(&[1.0; 6], &mut out);
+        Resampler::new(
+            SourceFormat {
+                sample_rate: 48_000,
+                channels: 6,
+            },
+            48_000,
+            2,
+        )
+        .process(&[1.0; 6], &mut out);
         assert_eq!(out.len(), 2);
         assert!(out.iter().all(|&s| s > 0.9 && s <= 1.0), "{out:?}");
     }
@@ -302,7 +341,10 @@ mod tests {
     #[test]
     fn continuous_stream_has_no_seam() {
         // Feeding two halves back to back must equal feeding the whole signal at once.
-        let src = SourceFormat { sample_rate: 44_100, channels: 2 };
+        let src = SourceFormat {
+            sample_rate: 44_100,
+            channels: 2,
+        };
         let input = sine(44_100, 2, 1.0, 523.25);
         let mut whole = Vec::new();
         let mut r = Resampler::new(src, 48_000, 2);
@@ -317,7 +359,11 @@ mod tests {
         r.process(b, &mut split);
         r.finish(&mut split);
         assert_eq!(whole.len(), split.len());
-        let max_diff = whole.iter().zip(&split).map(|(x, y)| (x - y).abs()).fold(0.0, f32::max);
+        let max_diff = whole
+            .iter()
+            .zip(&split)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f32::max);
         assert!(max_diff < 1e-5, "seam difference {max_diff}");
     }
 }

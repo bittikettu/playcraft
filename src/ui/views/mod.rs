@@ -37,13 +37,15 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     match app.view {
         View::Playlist if main.width >= SIDE_MIN_WIDTH => {
             let [list, side] =
-                Layout::horizontal([Constraint::Fill(1), Constraint::Length(SIDE_WIDTH)]).areas(main);
+                Layout::horizontal([Constraint::Fill(1), Constraint::Length(SIDE_WIDTH)])
+                    .areas(main);
             playlist::draw(f, app, list, true);
             now_playing::draw(f, app, side);
         }
         View::Playlist => playlist::draw(f, app, main, true),
         View::FileManager if main.width >= 60 => {
-            let [files, list] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(main);
+            let [files, list] =
+                Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(main);
             file_manager::draw(f, app, files);
             playlist::draw(f, app, list, false);
         }
@@ -61,13 +63,22 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
 fn centered(area: Rect, pct_w: u16, pct_h: u16) -> Rect {
     let w = (area.width * pct_w / 100).max(20).min(area.width);
     let h = (area.height * pct_h / 100).max(5).min(area.height);
-    Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
+    Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    )
 }
 
 /// `mm:ss`, or `h:mm:ss` from one hour up.
 pub fn format_time(d: Duration) -> String {
     let s = d.as_secs();
-    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{:02}:{:02}", s / 60, s % 60) }
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{:02}:{:02}", s / 60, s % 60)
+    }
 }
 
 /// Truncates `s` to at most `width` terminal columns, ending with `ellipsis` when cut.

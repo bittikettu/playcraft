@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::Receiver;
 
 use crate::audio::{AudioCommand, AudioHandle, StreamInfo};
+use crate::config::{Config, ReplayGainMode};
 use crate::library::scanner::MetadataScanner;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
 use crate::playlist::engine::Engine;
@@ -102,6 +103,10 @@ pub struct App {
     pub repeat: RepeatMode,
     /// Playlist file last loaded or saved (default for the save prompt).
     pub playlist_path: Option<PathBuf>,
+    /// Live search filter for the playlist view.
+    pub filter: Option<String>,
+    pub show_spectrum: bool,
+    pub replaygain: ReplayGainMode,
     pub quit: bool,
     pub(crate) failures: usize,
     pub(crate) engine: Engine,
@@ -137,6 +142,9 @@ impl App {
             play_mode: PlayMode::default(),
             repeat: RepeatMode::default(),
             playlist_path: None,
+            filter: None,
+            show_spectrum: true,
+            replaygain: ReplayGainMode::Off,
             quit: false,
             failures: 0,
             engine: Engine::new(None),
@@ -168,9 +176,49 @@ impl App {
         self.root.group_at(&self.cwd).unwrap_or(&self.root)
     }
 
+    /// Rows of the current group, narrowed by the search filter if one is active.
     pub fn rows(&self) -> Vec<Row> {
         let g = self.current_group();
-        (0..g.subgroups.len()).map(Row::Group).chain((0..g.tracks.len()).map(Row::Track)).collect()
+        let groups = (0..g.subgroups.len()).map(Row::Group);
+        let tracks = (0..g.tracks.len()).map(Row::Track);
+        match self.filter.as_deref().map(str::to_lowercase) {
+            None => groups.chain(tracks).collect(),
+            Some(needle) => groups
+                .chain(tracks)
+                .filter(|row| match *row {
+                    Row::Group(i) => g.subgroups[i].name.to_lowercase().contains(&needle),
+                    Row::Track(i) => {
+                        let t = &g.tracks[i];
+                        t.display_name().to_lowercase().contains(&needle)
+                            || t.file_name().to_lowercase().contains(&needle)
+                            || t.metadata
+                                .as_ref()
+                                .and_then(|m| m.album.as_ref())
+                                .is_some_and(|a| a.to_lowercase().contains(&needle))
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    /// Applies settings from `config.toml`. Returns warnings to show the user.
+    pub fn apply_config(&mut self, config: &Config) -> Vec<String> {
+        let (keymap, mut warnings) = config.keymap();
+        self.keymap = keymap;
+        let (theme, warning) =
+            Theme::by_name(&config.ui.color_theme, super::theme::supports_truecolor());
+        self.theme = theme;
+        warnings.extend(warning);
+        self.symbols = Symbols::by_name(&config.ui.charset);
+        self.fps = config.ui.fps;
+        self.show_spectrum = config.ui.show_spectrum;
+        self.replaygain = config.general.replaygain;
+        self.fm.show_hidden = config.ui.show_hidden;
+        self.fm.go_to(
+            crate::library::fs_browser::Location::Dir(config.music_dir()),
+            None,
+        );
+        warnings
     }
 
     pub fn cursor_row(&self) -> Option<Row> {
@@ -232,9 +280,23 @@ impl App {
 
     pub fn on_key(&mut self, key: KeyBinding) {
         if let Some(prompt) = self.prompt.as_mut() {
+            let searching = prompt.kind == PromptKind::Search;
             match prompt.handle(key) {
-                PromptResult::Editing => {}
-                PromptResult::Cancelled => self.prompt = None,
+                PromptResult::Editing => {
+                    if searching {
+                        // Filter as you type.
+                        let input = prompt.input.clone();
+                        self.filter = Some(input).filter(|s| !s.is_empty());
+                        self.cursor = 0;
+                        self.scroll = 0;
+                    }
+                }
+                PromptResult::Cancelled => {
+                    self.prompt = None;
+                    if searching {
+                        self.filter = None;
+                    }
+                }
                 PromptResult::Submitted(answer) => {
                     if let Some(prompt) = self.prompt.take() {
                         self.on_prompt(prompt.kind, answer);
@@ -243,7 +305,9 @@ impl App {
             }
             return;
         }
-        let Some(action) = self.keymap.lookup(self.context(), &key) else { return };
+        let Some(action) = self.keymap.lookup(self.context(), &key) else {
+            return;
+        };
         if let Overlay::Help { scroll } = self.overlay {
             let scroll = match action {
                 Action::CursorUp => scroll.saturating_sub(1),
@@ -292,12 +356,18 @@ impl App {
             Action::VolumeDown => self.change_volume(-VOLUME_STEP),
             Action::CyclePlayMode => {
                 self.play_mode = self.play_mode.cycle();
-                self.banner(BannerLevel::Info, format!("Play mode: {}", self.play_mode.label()));
+                self.banner(
+                    BannerLevel::Info,
+                    format!("Play mode: {}", self.play_mode.label()),
+                );
                 self.requeue();
             }
             Action::CycleRepeat => {
                 self.repeat = self.repeat.cycle();
-                self.banner(BannerLevel::Info, format!("Repeat: {}", self.repeat.label()));
+                self.banner(
+                    BannerLevel::Info,
+                    format!("Repeat: {}", self.repeat.label()),
+                );
                 self.requeue();
             }
             Action::ToggleGroupShuffle => self.toggle_group_shuffle(),
@@ -311,13 +381,22 @@ impl App {
             Action::Delete => self.delete_at_cursor(),
             Action::MoveUp => self.move_at_cursor(-1),
             Action::MoveDown => self.move_at_cursor(1),
+            Action::Search => {
+                let current = self.filter.clone().unwrap_or_default();
+                self.prompt = Some(Prompt::new(PromptKind::Search, "Search: ", current));
+            }
             Action::Help => self.overlay = Overlay::Help { scroll: 0 },
-            Action::Close => self.banner = None,
+            Action::Close => {
+                if self.filter.take().is_none() {
+                    self.banner = None;
+                }
+            }
             #[cfg(debug_assertions)]
             Action::DebugPanic => panic!("debug panic requested from the keyboard"),
-            other => {
-                self.banner(BannerLevel::Info, format!("{}: not available yet", other.description()))
-            }
+            other => self.banner(
+                BannerLevel::Info,
+                format!("{}: not available yet", other.description()),
+            ),
         }
     }
 
@@ -328,15 +407,20 @@ impl App {
                     return;
                 }
                 match self.fm.select_matching(&answer) {
-                    Ok(n) => self.banner(BannerLevel::Info, format!("{n} entries match \"{answer}\"")),
+                    Ok(n) => {
+                        self.banner(BannerLevel::Info, format!("{n} entries match \"{answer}\""))
+                    }
                     Err(e) => self.banner(BannerLevel::Warning, format!("Bad pattern: {e}")),
                 }
             }
             PromptKind::NewGroup => self.create_group(answer),
             PromptKind::RenameGroup => self.rename_group(answer),
             PromptKind::SavePlaylist => self.save_answer(answer),
+            PromptKind::Search => {
+                self.filter = Some(answer).filter(|s| !s.is_empty());
+                self.cursor = 0;
+            }
             PromptKind::Confirm(confirm) => self.confirmed(confirm),
-            other => log::debug!("unhandled prompt {other:?}"),
         }
     }
 
@@ -346,6 +430,7 @@ impl App {
                 self.cwd.push(i);
                 self.cursor = 0;
                 self.scroll = 0;
+                self.filter = None;
             }
             Some(Row::Track(i)) => {
                 if let Some(uid) = self.current_group().tracks.get(i).map(|t| t.uid) {
@@ -358,6 +443,7 @@ impl App {
 
     fn leave_group(&mut self) {
         if let Some(i) = self.cwd.pop() {
+            self.filter = None;
             self.cursor = i;
             self.scroll = 0;
         }

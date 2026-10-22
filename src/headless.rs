@@ -9,7 +9,8 @@ use crossbeam_channel::{select, unbounded};
 use crate::audio::{AudioCommand, AudioConfig, AudioEvent, AudioHandle};
 use crate::model::PlaybackStatus;
 
-const HELP: &str = "commands: p pause/resume | s stop | n next | f/b seek +/-5s | +/- volume | q quit";
+const HELP: &str =
+    "commands: p pause/resume | s stop | n next | f/b seek +/-5s | +/- volume | q quit";
 
 fn mmss(d: Duration) -> String {
     let s = d.as_secs();

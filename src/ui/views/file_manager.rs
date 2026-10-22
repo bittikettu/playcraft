@@ -16,11 +16,16 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         FmMode::PickPlaylist => " Load playlist ",
     };
     let block = Block::bordered()
+        .border_set(app.symbols.border)
         .border_style(theme.title)
         .style(theme.base)
         .title(Line::styled(title, theme.title))
         .title_bottom(Line::styled(
-            if fm.selected.is_empty() { String::new() } else { format!(" {} selected ", fm.selected.len()) },
+            if fm.selected.is_empty() {
+                String::new()
+            } else {
+                format!(" {} selected ", fm.selected.len())
+            },
             theme.selected,
         ));
     let inner = block.inner(area);
@@ -32,17 +37,28 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let ell = app.symbols.ellipsis;
 
     let header = fm.error.clone().unwrap_or_else(|| fm.location.display());
-    let header_style = if fm.error.is_some() { theme.warning } else { theme.title };
+    let header_style = if fm.error.is_some() {
+        theme.warning
+    } else {
+        theme.title
+    };
     f.render_widget(
         Paragraph::new(Line::styled(truncate(&header, width, ell), header_style)),
         Rect { height: 1, ..inner },
     );
 
-    let list = Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner };
+    let list = Rect {
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
     let height = list.height as usize;
     fm.height = height;
     if fm.entries.is_empty() {
-        f.render_widget(Paragraph::new(Line::styled("  (no audio files here)", theme.dim)), list);
+        f.render_widget(
+            Paragraph::new(Line::styled("  (no audio files here)", theme.dim)),
+            list,
+        );
         return;
     }
     fm.cursor = fm.cursor.min(fm.entries.len() - 1);

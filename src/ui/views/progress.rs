@@ -11,14 +11,21 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, compact: bool) {
     let inner = if compact {
         area
     } else {
-        let block = Block::bordered().border_style(theme.border).style(theme.base);
+        let block = Block::bordered()
+            .border_set(app.symbols.border)
+            .border_style(theme.border)
+            .style(theme.base);
         let inner = block.inner(area);
         f.render_widget(block, area);
         inner
     };
     let shared = app.audio.shared();
     let position = shared.position();
-    let duration = app.now.as_ref().and_then(|n| n.duration).unwrap_or(shared.duration());
+    let duration = app
+        .now
+        .as_ref()
+        .and_then(|n| n.duration)
+        .unwrap_or(shared.duration());
     let time = format!(" {} / {}", format_time(position), format_time(duration));
 
     let width = inner.width as usize;
@@ -35,7 +42,10 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, compact: bool) {
     } else if done >= bar_width {
         (s.progress_done.repeat(bar_width), String::new())
     } else {
-        (s.progress_done.repeat(done - 1), s.progress_head.to_string())
+        (
+            s.progress_done.repeat(done - 1),
+            s.progress_head.to_string(),
+        )
     };
     let todo = bar_width - done.min(bar_width);
     let line = Line::from(vec![

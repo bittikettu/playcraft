@@ -38,7 +38,11 @@ pub enum PromptResult {
 
 impl Prompt {
     pub fn new(kind: PromptKind, label: impl Into<String>, initial: impl Into<String>) -> Self {
-        Prompt { kind, label: label.into(), input: initial.into() }
+        Prompt {
+            kind,
+            label: label.into(),
+            input: initial.into(),
+        }
     }
 
     pub fn is_confirm(&self) -> bool {
@@ -103,7 +107,11 @@ mod tests {
 
     #[test]
     fn confirm_accepts_only_yes() {
-        let mut p = Prompt::new(PromptKind::Confirm(Confirm::DeleteGroup(vec![0])), "Delete? ", "");
+        let mut p = Prompt::new(
+            PromptKind::Confirm(Confirm::DeleteGroup(vec![0])),
+            "Delete? ",
+            "",
+        );
         assert!(matches!(p.handle(key("y")), PromptResult::Submitted(_)));
         assert!(matches!(p.handle(key("n")), PromptResult::Cancelled));
         assert!(matches!(p.handle(key("q")), PromptResult::Cancelled));

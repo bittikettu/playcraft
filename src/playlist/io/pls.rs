@@ -10,7 +10,9 @@ use crate::model::{Group, Track};
 pub fn parse(text: &str, base: &Path) -> Group {
     let mut files = BTreeMap::new();
     for line in text.lines() {
-        let Some((key, value)) = line.trim().split_once('=') else { continue };
+        let Some((key, value)) = line.trim().split_once('=') else {
+            continue;
+        };
         let key = key.trim();
         if key.len() > 4 && key[..4].eq_ignore_ascii_case("file") {
             if let Ok(n) = key[4..].parse::<u32>() {
@@ -19,7 +21,10 @@ pub fn parse(text: &str, base: &Path) -> Group {
         }
     }
     let mut root = Group::new(0, "");
-    root.tracks = files.values().map(|f| Track::new(resolve_entry(base, f))).collect();
+    root.tracks = files
+        .values()
+        .map(|f| Track::new(resolve_entry(base, f)))
+        .collect();
     root
 }
 

@@ -30,7 +30,10 @@ fn read_metadata_inner(path: &Path) -> Result<TrackMetadata, lofty::error::FileP
     let tagged = lofty::read_from_path(path)?;
     let props = tagged.properties();
     let mut meta = TrackMetadata {
-        bitrate_kbps: props.audio_bitrate().or(props.overall_bitrate()).unwrap_or(0),
+        bitrate_kbps: props
+            .audio_bitrate()
+            .or(props.overall_bitrate())
+            .unwrap_or(0),
         sample_rate_hz: props.sample_rate().unwrap_or(0),
         channels: props.channels().unwrap_or(0),
         duration: props.duration(),
@@ -63,8 +66,15 @@ fn fill_from_tag(meta: &mut TrackMetadata, tag: &Tag) {
 /// Parses ReplayGain values such as "-6.50 dB" or "0.988525".
 fn parse_gain(s: Option<&str>) -> Option<f32> {
     let s = s?.trim();
-    let number = s.split_whitespace().next()?.trim_end_matches(|c: char| c.is_ascii_alphabetic());
-    number.replace(',', ".").parse::<f32>().ok().filter(|v| v.is_finite())
+    let number = s
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    number
+        .replace(',', ".")
+        .parse::<f32>()
+        .ok()
+        .filter(|v| v.is_finite())
 }
 
 /// A pool of worker threads reading metadata. Results are polled with `results`.
@@ -76,22 +86,30 @@ pub struct MetadataScanner {
 
 impl MetadataScanner {
     pub fn new() -> Self {
-        let threads = thread::available_parallelism().map_or(2, |n| n.get()).clamp(1, 4);
+        let threads = thread::available_parallelism()
+            .map_or(2, |n| n.get())
+            .clamp(1, 4);
         let (job_tx, job_rx) = unbounded::<PathBuf>();
         let (res_tx, res_rx) = unbounded();
         for i in 0..threads {
             let jobs = job_rx.clone();
             let results = res_tx.clone();
-            let _ = thread::Builder::new().name(format!("metadata-{i}")).spawn(move || {
-                for path in jobs {
-                    let meta = read_metadata(&path);
-                    if results.send((path, meta)).is_err() {
-                        break;
+            let _ = thread::Builder::new()
+                .name(format!("metadata-{i}"))
+                .spawn(move || {
+                    for path in jobs {
+                        let meta = read_metadata(&path);
+                        if results.send((path, meta)).is_err() {
+                            break;
+                        }
                     }
-                }
-            });
+                });
         }
-        MetadataScanner { jobs: job_tx, results: res_rx, requested: HashSet::new() }
+        MetadataScanner {
+            jobs: job_tx,
+            results: res_rx,
+            requested: HashSet::new(),
+        }
     }
 
     /// Queues `path` unless it has been requested before.
@@ -129,7 +147,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn fixture(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join(name)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
     }
 
     #[test]
@@ -153,7 +174,11 @@ mod tests {
     fn reads_properties_of_untagged_files() {
         let meta = read_metadata(&fixture("sine_44k_cbr.mp3")).unwrap();
         // lofty averages over file size and duration, so a short CBR file reads slightly high.
-        assert!((310..=330).contains(&meta.bitrate_kbps), "{} kbps", meta.bitrate_kbps);
+        assert!(
+            (310..=330).contains(&meta.bitrate_kbps),
+            "{} kbps",
+            meta.bitrate_kbps
+        );
         assert!(meta.title.is_none());
     }
 

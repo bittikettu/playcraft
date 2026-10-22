@@ -144,7 +144,10 @@ impl Action {
     }
 
     pub fn from_config_name(name: &str) -> Option<Action> {
-        Action::ALL.iter().copied().find(|a| a.config_name() == name)
+        Action::ALL
+            .iter()
+            .copied()
+            .find(|a| a.config_name() == name)
     }
 
     pub fn description(self) -> &'static str {
@@ -245,7 +248,9 @@ impl KeyBinding {
         let mut rest = s;
         // A lone "+" or "-" is a key, not a separator.
         while rest.chars().count() > 1 {
-            let Some((head, tail)) = rest.split_once('+') else { break };
+            let Some((head, tail)) = rest.split_once('+') else {
+                break;
+            };
             if tail.is_empty() {
                 break;
             }
@@ -388,7 +393,10 @@ impl Default for Keymap {
             #[cfg(debug_assertions)]
             (C::Global, DebugPanic, &["Ctrl+F12"]),
         ];
-        let mut map = Keymap { bindings: HashMap::new(), next_order: 0 };
+        let mut map = Keymap {
+            bindings: HashMap::new(),
+            next_order: 0,
+        };
         for (ctx, action, keys) in defaults {
             for key in *keys {
                 map.bind(*ctx, k(key), *action);
@@ -401,7 +409,10 @@ impl Default for Keymap {
 impl Keymap {
     pub fn bind(&mut self, ctx: Context, key: KeyBinding, action: Action) {
         self.next_order += 1;
-        self.bindings.entry(ctx).or_default().insert(key, (action, self.next_order));
+        self.bindings
+            .entry(ctx)
+            .or_default()
+            .insert(key, (action, self.next_order));
     }
 
     /// Replaces every binding of `action` (in all contexts) with `keys` in the global context.
@@ -428,18 +439,29 @@ impl Keymap {
             let mut keys: Vec<(usize, KeyBinding)> = self
                 .bindings
                 .get(&c)
-                .map(|m| m.iter().filter(|(_, (a, _))| *a == action).map(|(k, (_, o))| (*o, *k)).collect())
+                .map(|m| {
+                    m.iter()
+                        .filter(|(_, (a, _))| *a == action)
+                        .map(|(k, (_, o))| (*o, *k))
+                        .collect()
+                })
                 .unwrap_or_default();
             keys.sort_by_key(|(order, _)| *order);
             keys.into_iter().map(|(_, k)| k).collect()
         };
         let keys = collect(ctx);
-        if keys.is_empty() && ctx != Context::Global { collect(Context::Global) } else { keys }
+        if keys.is_empty() && ctx != Context::Global {
+            collect(Context::Global)
+        } else {
+            keys
+        }
     }
 
     /// The first key for `action`, formatted, or "?" if unbound.
     pub fn hint(&self, ctx: Context, action: Action) -> String {
-        self.keys_for(ctx, action).first().map_or_else(|| "?".into(), |k| k.to_string())
+        self.keys_for(ctx, action)
+            .first()
+            .map_or_else(|| "?".into(), |k| k.to_string())
     }
 }
 
@@ -467,7 +489,10 @@ mod tests {
         );
         assert_eq!(KeyBinding::parse("F12").unwrap().code, KeyCode::F(12));
         assert_eq!(KeyBinding::parse("PgDn").unwrap().code, KeyCode::PageDown);
-        assert_eq!(KeyBinding::parse("Ctrl++").unwrap(), KeyBinding::new(KeyCode::Char('+'), KeyModifiers::CONTROL));
+        assert_eq!(
+            KeyBinding::parse("Ctrl++").unwrap(),
+            KeyBinding::new(KeyCode::Char('+'), KeyModifiers::CONTROL)
+        );
         assert!(KeyBinding::parse("Hyper+x").is_err());
         assert!(KeyBinding::parse("F99").is_err());
         assert!(KeyBinding::parse("abc").is_err());
@@ -475,7 +500,17 @@ mod tests {
 
     #[test]
     fn display_round_trips() {
-        for s in ["Space", "c", "Ctrl+u", "F1", "PgUp", "Left", "Alt+x", "Shift+Tab", "Del"] {
+        for s in [
+            "Space",
+            "c",
+            "Ctrl+u",
+            "F1",
+            "PgUp",
+            "Left",
+            "Alt+x",
+            "Shift+Tab",
+            "Del",
+        ] {
             let k = KeyBinding::parse(s).unwrap();
             assert_eq!(KeyBinding::parse(&k.to_string()).unwrap(), k, "{s}");
         }
@@ -483,28 +518,53 @@ mod tests {
 
     #[test]
     fn ignores_key_releases() {
-        let ev = KeyEvent::new_with_kind(KeyCode::Char('q'), KeyModifiers::NONE, KeyEventKind::Release);
+        let ev = KeyEvent::new_with_kind(
+            KeyCode::Char('q'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        );
         assert_eq!(KeyBinding::from_event(&ev), None);
     }
 
     #[test]
     fn altgr_and_shift_are_normalised() {
         // AltGr+7 on a Nordic layout produces '{' reported as Ctrl+Alt+'{'.
-        let altgr = press(KeyCode::Char('{'), KeyModifiers::CONTROL | KeyModifiers::ALT);
+        let altgr = press(
+            KeyCode::Char('{'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
         assert_eq!(KeyBinding::from_event(&altgr), Some(KeyBinding::plain('{')));
         let shifted = press(KeyCode::Char('V'), KeyModifiers::SHIFT);
-        assert_eq!(KeyBinding::from_event(&shifted), Some(KeyBinding::plain('V')));
+        assert_eq!(
+            KeyBinding::from_event(&shifted),
+            Some(KeyBinding::plain('V'))
+        );
     }
 
     #[test]
     fn context_bindings_override_global() {
         let km = Keymap::default();
         let space = KeyBinding::plain(' ');
-        assert_eq!(km.lookup(Context::Playlist, &space), Some(Action::PlayPause));
-        assert_eq!(km.lookup(Context::FileManager, &space), Some(Action::Select));
-        assert_eq!(km.lookup(Context::Playlist, &KeyBinding::plain('h')), Some(Action::PrevTrack));
-        assert_eq!(km.lookup(Context::FileManager, &KeyBinding::plain('h')), Some(Action::Back));
-        assert_eq!(km.lookup(Context::FileManager, &KeyBinding::plain('c')), Some(Action::PlayPause));
+        assert_eq!(
+            km.lookup(Context::Playlist, &space),
+            Some(Action::PlayPause)
+        );
+        assert_eq!(
+            km.lookup(Context::FileManager, &space),
+            Some(Action::Select)
+        );
+        assert_eq!(
+            km.lookup(Context::Playlist, &KeyBinding::plain('h')),
+            Some(Action::PrevTrack)
+        );
+        assert_eq!(
+            km.lookup(Context::FileManager, &KeyBinding::plain('h')),
+            Some(Action::Back)
+        );
+        assert_eq!(
+            km.lookup(Context::FileManager, &KeyBinding::plain('c')),
+            Some(Action::PlayPause)
+        );
     }
 
     #[test]
@@ -524,7 +584,11 @@ mod tests {
             ("Ctrl+d", Action::PageDown),
             ("q", Action::Quit),
         ] {
-            assert_eq!(km.lookup(ctx, &KeyBinding::parse(key).unwrap()), Some(action), "{key}");
+            assert_eq!(
+                km.lookup(ctx, &KeyBinding::parse(key).unwrap()),
+                Some(action),
+                "{key}"
+            );
         }
     }
 
@@ -532,7 +596,10 @@ mod tests {
     fn rebind_replaces_all_previous_keys() {
         let mut km = Keymap::default();
         km.rebind(Action::PlayPause, &[KeyBinding::plain('x')]);
-        assert_eq!(km.lookup(Context::Playlist, &KeyBinding::plain('x')), Some(Action::PlayPause));
+        assert_eq!(
+            km.lookup(Context::Playlist, &KeyBinding::plain('x')),
+            Some(Action::PlayPause)
+        );
         assert_eq!(km.lookup(Context::Playlist, &KeyBinding::plain('c')), None);
         assert_eq!(km.hint(Context::Playlist, Action::PlayPause), "x");
     }

@@ -48,12 +48,16 @@ pub fn load(path: &Path) -> Result<Group, PlaylistError> {
     let bytes = std::fs::read(path)?;
     let base = path.parent().unwrap_or(Path::new("."));
     let mut root = match format {
-        PlaylistFormat::M3u | PlaylistFormat::M3u8 => m3u::parse(&decode_text(&bytes, format), base),
+        PlaylistFormat::M3u | PlaylistFormat::M3u8 => {
+            m3u::parse(&decode_text(&bytes, format), base)
+        }
         PlaylistFormat::Pls => pls::parse(&decode_text(&bytes, format), base),
         PlaylistFormat::Blst => blst::parse(&decode_text(&bytes, format), base)?,
     };
     if root.name.is_empty() || format != PlaylistFormat::Blst {
-        root.name = path.file_stem().map_or_else(|| "Playlist".into(), |s| s.to_string_lossy().into_owned());
+        root.name = path
+            .file_stem()
+            .map_or_else(|| "Playlist".into(), |s| s.to_string_lossy().into_owned());
     }
     root.renumber(0);
     Ok(root)
@@ -163,7 +167,11 @@ pub fn resolve_entry(base: &Path, entry: &str) -> PathBuf {
 /// How an entry is written: relative to `base` when the file is inside it, else absolute.
 pub fn entry_for(base: &Path, path: &Path) -> String {
     let base = lexical_clean(&crate::paths::normalize(base));
-    let path = lexical_clean(&if path.is_absolute() { path.to_path_buf() } else { crate::paths::normalize(path) });
+    let path = lexical_clean(&if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        crate::paths::normalize(path)
+    });
     match path.strip_prefix(&base) {
         Ok(rel) if !rel.as_os_str().is_empty() => rel.display().to_string(),
         _ => crate::paths::display(&path),
@@ -180,9 +188,12 @@ mod tests {
         root.tracks.push(Track::new(dir.join("intro.mp3")));
         let mut synth = Group::new(1, "Synthwave");
         synth.shuffle = true;
-        synth.tracks.push(Track::new(dir.join("synth").join("a.flac")));
+        synth
+            .tracks
+            .push(Track::new(dir.join("synth").join("a.flac")));
         let mut deep = Group::new(2, "Deep Cuts");
-        deep.tracks.push(Track::new(dir.join("synth").join("deep").join("b.ogg")));
+        deep.tracks
+            .push(Track::new(dir.join("synth").join("deep").join("b.ogg")));
         synth.subgroups.push(deep);
         root.subgroups.push(synth);
         let mut pods = Group::new(3, "Podcasts");
@@ -193,7 +204,12 @@ mod tests {
 
     fn shape(g: &Group) -> Vec<(String, Vec<PathBuf>)> {
         let mut out = Vec::new();
-        g.walk(&mut |g| out.push((g.name.clone(), g.tracks.iter().map(|t| t.path.clone()).collect())));
+        g.walk(&mut |g| {
+            out.push((
+                g.name.clone(),
+                g.tracks.iter().map(|t| t.path.clone()).collect(),
+            ))
+        });
         out
     }
 
@@ -206,7 +222,10 @@ mod tests {
         save(&file, &root).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("\"format\": \"blst\""), "{text}");
-        assert!(!text.contains(&*base.to_string_lossy().replace('\\', "\\\\")), "paths should be relative: {text}");
+        assert!(
+            !text.contains(&*base.to_string_lossy().replace('\\', "\\\\")),
+            "paths should be relative: {text}"
+        );
         let loaded = load(&file).unwrap();
         let mut expected = shape(&root);
         expected[0].0 = loaded.name.clone();
@@ -248,18 +267,46 @@ mod tests {
 
     #[test]
     fn resolves_relative_absolute_and_uri_entries() {
-        let base = if cfg!(windows) { PathBuf::from(r"D:\Music\Lists") } else { PathBuf::from("/music/lists") };
-        assert_eq!(resolve_entry(&base, "song.mp3"), base.join("song.mp3"));
-        assert_eq!(resolve_entry(&base, "../Album/01.flac"), base.parent().unwrap().join("Album").join("01.flac"));
-        assert_eq!(resolve_entry(&base, "..\\Album\\01.flac"), base.parent().unwrap().join("Album").join("01.flac"));
-        if cfg!(windows) {
-            assert_eq!(resolve_entry(&base, r"C:\Other\x.mp3"), PathBuf::from(r"C:\Other\x.mp3"));
-            assert_eq!(resolve_entry(&base, "C:/Other/x.mp3"), PathBuf::from(r"C:\Other\x.mp3"));
-            assert_eq!(resolve_entry(&base, "file:///C:/My%20Music/x.mp3"), PathBuf::from(r"C:\My Music\x.mp3"));
-            assert_eq!(resolve_entry(&base, r"\\nas\share\x.mp3"), PathBuf::from(r"\\nas\share\x.mp3"));
-            assert_eq!(resolve_entry(&base, "file://nas/share/x.mp3"), PathBuf::from(r"\\nas\share\x.mp3"));
+        let base = if cfg!(windows) {
+            PathBuf::from(r"D:\Music\Lists")
         } else {
-            assert_eq!(resolve_entry(&base, "file:///home/u/My%20Music/x.mp3"), PathBuf::from("/home/u/My Music/x.mp3"));
+            PathBuf::from("/music/lists")
+        };
+        assert_eq!(resolve_entry(&base, "song.mp3"), base.join("song.mp3"));
+        assert_eq!(
+            resolve_entry(&base, "../Album/01.flac"),
+            base.parent().unwrap().join("Album").join("01.flac")
+        );
+        assert_eq!(
+            resolve_entry(&base, "..\\Album\\01.flac"),
+            base.parent().unwrap().join("Album").join("01.flac")
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                resolve_entry(&base, r"C:\Other\x.mp3"),
+                PathBuf::from(r"C:\Other\x.mp3")
+            );
+            assert_eq!(
+                resolve_entry(&base, "C:/Other/x.mp3"),
+                PathBuf::from(r"C:\Other\x.mp3")
+            );
+            assert_eq!(
+                resolve_entry(&base, "file:///C:/My%20Music/x.mp3"),
+                PathBuf::from(r"C:\My Music\x.mp3")
+            );
+            assert_eq!(
+                resolve_entry(&base, r"\\nas\share\x.mp3"),
+                PathBuf::from(r"\\nas\share\x.mp3")
+            );
+            assert_eq!(
+                resolve_entry(&base, "file://nas/share/x.mp3"),
+                PathBuf::from(r"\\nas\share\x.mp3")
+            );
+        } else {
+            assert_eq!(
+                resolve_entry(&base, "file:///home/u/My%20Music/x.mp3"),
+                PathBuf::from("/home/u/My Music/x.mp3")
+            );
         }
     }
 
@@ -286,6 +333,9 @@ mod tests {
 
     #[test]
     fn unknown_extension_is_rejected() {
-        assert!(matches!(load(Path::new("x.txt")), Err(PlaylistError::UnknownFormat)));
+        assert!(matches!(
+            load(Path::new("x.txt")),
+            Err(PlaylistError::UnknownFormat)
+        ));
     }
 }

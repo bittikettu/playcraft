@@ -53,7 +53,11 @@ impl App {
         let cwd = self.cwd.clone();
         if let Some(g) = self.root.group_at_mut(&cwd) {
             g.shuffle = !g.shuffle;
-            let text = format!("Shuffle {}: {}", g.name, if g.shuffle { "ON" } else { "OFF" });
+            let text = format!(
+                "Shuffle {}: {}",
+                g.name,
+                if g.shuffle { "ON" } else { "OFF" }
+            );
             self.banner(BannerLevel::Info, text);
             self.edited();
         }
@@ -65,7 +69,9 @@ impl App {
         }
         let id = self.root.max_id() + 1;
         let cwd = self.cwd.clone();
-        let Some(parent) = self.root.group_at_mut(&cwd) else { return };
+        let Some(parent) = self.root.group_at_mut(&cwd) else {
+            return;
+        };
         parent.subgroups.push(Group::new(id, name.clone()));
         // The new group is the last of the group rows.
         self.cursor = parent.subgroups.len() - 1;
@@ -84,12 +90,18 @@ impl App {
     }
 
     pub(crate) fn rename_group(&mut self, name: String) {
-        let Some(Row::Group(i)) = self.cursor_row() else { return };
+        let Some(Row::Group(i)) = self.cursor_row() else {
+            return;
+        };
         if name.is_empty() {
             return;
         }
         let cwd = self.cwd.clone();
-        if let Some(g) = self.root.group_at_mut(&cwd).and_then(|p| p.subgroups.get_mut(i)) {
+        if let Some(g) = self
+            .root
+            .group_at_mut(&cwd)
+            .and_then(|p| p.subgroups.get_mut(i))
+        {
             g.name = name;
         }
     }
@@ -98,14 +110,24 @@ impl App {
         match self.cursor_row() {
             Some(Row::Group(i)) => {
                 let g = &self.current_group().subgroups[i];
-                let label = format!("Delete group \"{}\" and its {} track(s)?", g.name, g.total_tracks());
+                let label = format!(
+                    "Delete group \"{}\" and its {} track(s)?",
+                    g.name,
+                    g.total_tracks()
+                );
                 let mut path = self.cwd.clone();
                 path.push(i);
-                self.prompt = Some(Prompt::new(PromptKind::Confirm(Confirm::DeleteGroup(path)), label, ""));
+                self.prompt = Some(Prompt::new(
+                    PromptKind::Confirm(Confirm::DeleteGroup(path)),
+                    label,
+                    "",
+                ));
             }
             Some(Row::Track(i)) => {
                 let cwd = self.cwd.clone();
-                let Some(uid) = self.current_group().tracks.get(i).map(|t| t.uid) else { return };
+                let Some(uid) = self.current_group().tracks.get(i).map(|t| t.uid) else {
+                    return;
+                };
                 self.remove_tracks(|g, path| {
                     if path == cwd.as_slice() {
                         g.tracks.retain(|t| t.uid != uid);
@@ -119,7 +141,9 @@ impl App {
     pub(crate) fn confirmed(&mut self, confirm: Confirm) {
         match confirm {
             Confirm::DeleteGroup(path) => {
-                let Some((&index, parent)) = path.split_last() else { return };
+                let Some((&index, parent)) = path.split_last() else {
+                    return;
+                };
                 let parent = parent.to_vec();
                 let mut removed = None;
                 self.remove_tracks(|g, p| {
@@ -144,10 +168,19 @@ impl App {
     /// track disappears, its successor (computed beforehand) stays queued.
     fn remove_tracks(&mut self, mut edit: impl FnMut(&mut Group, &[usize])) {
         let follow = self.playing.and_then(|p| {
-            let st = PlayState { root: &self.root, mode: self.play_mode, repeat: self.repeat, version: self.version };
+            let st = PlayState {
+                root: &self.root,
+                mode: self.play_mode,
+                repeat: self.repeat,
+                version: self.version,
+            };
             self.engine.successor(&st, p)
         });
-        fn apply(g: &mut Group, path: &mut Vec<usize>, edit: &mut impl FnMut(&mut Group, &[usize])) {
+        fn apply(
+            g: &mut Group,
+            path: &mut Vec<usize>,
+            edit: &mut impl FnMut(&mut Group, &[usize]),
+        ) {
             edit(g, path);
             for i in 0..g.subgroups.len() {
                 path.push(i);
@@ -161,7 +194,9 @@ impl App {
         if playing_gone {
             let next = follow.filter(|&u| self.root.locate(u).is_some());
             self.pending_queue = next;
-            let path = next.and_then(|u| self.root.track_by_uid(u)).map(|t| t.path.clone());
+            let path = next
+                .and_then(|u| self.root.track_by_uid(u))
+                .map(|t| t.path.clone());
             self.audio.send(AudioCommand::QueueNext(path));
         } else {
             self.requeue();
@@ -173,7 +208,9 @@ impl App {
     pub(crate) fn move_at_cursor(&mut self, delta: isize) {
         let cwd = self.cwd.clone();
         let Some(row) = self.cursor_row() else { return };
-        let Some(group) = self.root.group_at_mut(&cwd) else { return };
+        let Some(group) = self.root.group_at_mut(&cwd) else {
+            return;
+        };
         match row {
             Row::Group(i) => {
                 let j = i as isize + delta;
@@ -183,7 +220,15 @@ impl App {
                 let j = j as usize;
                 group.subgroups.swap(i, j);
                 self.cursor = j;
-                self.remap_groups(&cwd, |k| Some(if k == i { j } else if k == j { i } else { k }));
+                self.remap_groups(&cwd, |k| {
+                    Some(if k == i {
+                        j
+                    } else if k == j {
+                        i
+                    } else {
+                        k
+                    })
+                });
             }
             Row::Track(i) => {
                 let j = i as isize + delta;
@@ -214,7 +259,9 @@ impl App {
                 if let Some(entry) = self.fm.enter() {
                     match (self.fm.mode, entry.kind) {
                         (FmMode::AddFiles, EntryKind::Audio) => self.add_files(vec![entry.path]),
-                        (FmMode::AddFiles, EntryKind::Playlist) => self.import_playlist(&entry.path),
+                        (FmMode::AddFiles, EntryKind::Playlist) => {
+                            self.import_playlist(&entry.path)
+                        }
                         (FmMode::PickPlaylist, EntryKind::Playlist) => {
                             self.load_playlist(&entry.path);
                             self.view = View::Playlist;
@@ -226,13 +273,21 @@ impl App {
             Action::Select => self.fm.toggle_current(),
             Action::InvertSelection => self.fm.invert_selection(),
             Action::SelectGlob => {
-                self.prompt = Some(Prompt::new(PromptKind::SelectGlob, "Select (glob, or re:regex): ", "*."));
+                self.prompt = Some(Prompt::new(
+                    PromptKind::SelectGlob,
+                    "Select (glob, or re:regex): ",
+                    "*.",
+                ));
             }
             Action::AddSelected => self.add_selection(),
             Action::ToggleHidden => {
                 self.fm.show_hidden = !self.fm.show_hidden;
                 self.fm.reload();
-                let state = if self.fm.show_hidden { "shown" } else { "hidden" };
+                let state = if self.fm.show_hidden {
+                    "shown"
+                } else {
+                    "hidden"
+                };
                 self.banner(BannerLevel::Info, format!("Hidden files {state}"));
             }
             Action::Close | Action::FileManager => self.view = View::Playlist,
@@ -276,7 +331,10 @@ impl App {
     pub fn add_files(&mut self, files: Vec<PathBuf>) {
         let target = self.cwd.clone();
         let n = self.add_tracks_to(&target, files);
-        self.banner(BannerLevel::Info, format!("Added {n} file(s) to {}", self.current_group().name));
+        self.banner(
+            BannerLevel::Info,
+            format!("Added {n} file(s) to {}", self.current_group().name),
+        );
     }
 
     pub(crate) fn add_tracks_to(&mut self, group: &[usize], files: Vec<PathBuf>) -> usize {
@@ -290,7 +348,11 @@ impl App {
             t.metadata = cache.get(&t.path).cloned();
             t
         });
-        let target = if self.root.group_at(group).is_some() { group } else { &[] };
+        let target = if self.root.group_at(group).is_some() {
+            group
+        } else {
+            &[]
+        };
         if let Some(g) = self.root.group_at_mut(target) {
             g.tracks.extend(tracks);
         }
@@ -304,7 +366,14 @@ impl App {
 
     pub(crate) fn request_all_metadata(&mut self) {
         let mut paths = Vec::new();
-        self.root.walk(&mut |g| paths.extend(g.tracks.iter().filter(|t| t.metadata.is_none()).map(|t| t.path.clone())));
+        self.root.walk(&mut |g| {
+            paths.extend(
+                g.tracks
+                    .iter()
+                    .filter(|t| t.metadata.is_none())
+                    .map(|t| t.path.clone()),
+            )
+        });
         for p in paths {
             self.scanner.request(&p);
         }
@@ -314,8 +383,11 @@ impl App {
     pub fn process_background(&mut self) -> bool {
         let mut changed = false;
 
-        let results: HashMap<PathBuf, TrackMetadata> =
-            self.scanner.results().filter_map(|(p, m)| m.map(|m| (p, m))).collect();
+        let results: HashMap<PathBuf, TrackMetadata> = self
+            .scanner
+            .results()
+            .filter_map(|(p, m)| m.map(|m| (p, m)))
+            .collect();
         if !results.is_empty() {
             self.root.walk_mut(&mut |g| {
                 for t in g.tracks.iter_mut().filter(|t| t.metadata.is_none()) {
@@ -349,7 +421,10 @@ impl App {
         }
         for i in finished.into_iter().rev() {
             let scan = self.scans.remove(i);
-            self.banner(BannerLevel::Info, format!("Added {} file(s) from folders", scan.added));
+            self.banner(
+                BannerLevel::Info,
+                format!("Added {} file(s) from folders", scan.added),
+            );
             changed = true;
         }
         changed
@@ -362,7 +437,15 @@ mod tests {
 
     #[test]
     fn remaps_paths_below_parent_only() {
-        let shift = |i: usize| if i == 1 { None } else if i > 1 { Some(i - 1) } else { Some(i) };
+        let shift = |i: usize| {
+            if i == 1 {
+                None
+            } else if i > 1 {
+                Some(i - 1)
+            } else {
+                Some(i)
+            }
+        };
         let mut p = vec![0, 2, 5];
         assert!(remap_path(&mut p, &[0], &shift));
         assert_eq!(p, vec![0, 1, 5]);

@@ -9,6 +9,7 @@ use crate::ui::app::App;
 pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect) {
     let theme = &app.theme;
     let block = Block::bordered()
+        .border_set(app.symbols.border)
         .border_style(theme.border)
         .style(theme.base)
         .title(Line::styled(" Now Playing ", theme.title).centered());
@@ -19,20 +20,34 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect) {
 
     let field = |label: &str, value: String| -> Line<'static> {
         let value = truncate(&value, width.saturating_sub(label.len()), ell);
-        Line::from(vec![Span::styled(label.to_string(), theme.dim), Span::styled(value, theme.base)])
+        Line::from(vec![
+            Span::styled(label.to_string(), theme.dim),
+            Span::styled(value, theme.base),
+        ])
     };
 
-    let track = app.now.as_ref().and_then(|n| n.track).and_then(|u| app.root.track_by_uid(u));
+    let track = app
+        .now
+        .as_ref()
+        .and_then(|n| n.track)
+        .and_then(|u| app.root.track_by_uid(u));
     let meta = track.and_then(|t| t.metadata.as_ref());
     let mut lines = Vec::new();
     match &app.now {
         Some(now) => {
             let title = meta
                 .and_then(|m| m.title.clone())
-                .or_else(|| now.path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .or_else(|| {
+                    now.path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                })
                 .unwrap_or_default();
             lines.push(field("Title:  ", title));
-            lines.push(field("Artist: ", meta.and_then(|m| m.artist.clone()).unwrap_or_default()));
+            lines.push(field(
+                "Artist: ",
+                meta.and_then(|m| m.artist.clone()).unwrap_or_default(),
+            ));
             let album = match meta {
                 Some(m) => match (&m.album, m.year) {
                     (Some(a), Some(y)) => format!("{a} ({y})"),
@@ -64,7 +79,11 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect) {
         crate::model::PlaybackStatus::Paused => theme.warning,
         crate::model::PlaybackStatus::Stopped => theme.dim,
     };
-    let shuffle = if app.current_group().shuffle { "ON" } else { "OFF" };
+    let shuffle = if app.current_group().shuffle {
+        "ON"
+    } else {
+        "OFF"
+    };
     let volume = app.audio.shared().volume();
     let bar_width = width.saturating_sub(12).clamp(4, 10);
     let filled = (volume * bar_width as f32).round() as usize;
@@ -74,9 +93,15 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect) {
         app.symbols.volume_off.repeat(bar_width - filled)
     );
     let footer = vec![
-        Line::from(vec![Span::styled("Status: ", theme.dim), Span::styled(format!("[{}]", status.label()), status_style)]),
+        Line::from(vec![
+            Span::styled("Status: ", theme.dim),
+            Span::styled(format!("[{}]", status.label()), status_style),
+        ]),
         field("Mode:   ", app.play_mode.label().to_string()),
-        field("Shuf: ", format!("{shuffle:<4} Rep: {}", app.repeat.label())),
+        field(
+            "Shuf: ",
+            format!("{shuffle:<4} Rep: {}", app.repeat.label()),
+        ),
         Line::from(vec![
             Span::styled("Vol: ", theme.dim),
             Span::styled(bar, theme.progress_done),

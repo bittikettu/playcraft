@@ -11,14 +11,21 @@ use super::app::{App, Banner, BannerLevel, NowPlaying, Row, View};
 /// Builds the engine's view of the playlist from `App` fields (disjoint borrows).
 macro_rules! play_state {
     ($app:expr) => {
-        PlayState { root: &$app.root, mode: $app.play_mode, repeat: $app.repeat, version: $app.version }
+        PlayState {
+            root: &$app.root,
+            mode: $app.play_mode,
+            repeat: $app.repeat,
+            version: $app.version,
+        }
     };
 }
 
 impl App {
     /// Starts `uid`. `user` marks an explicit choice, which re-anchors group playback.
     pub fn play(&mut self, uid: u64, user: bool) {
-        let Some(path) = self.root.track_by_uid(uid).map(|t| t.path.clone()) else { return };
+        let Some(path) = self.root.track_by_uid(uid).map(|t| t.path.clone()) else {
+            return;
+        };
         if user {
             self.engine.anchor_at(&self.root, uid);
         }
@@ -34,11 +41,15 @@ impl App {
             PlaybackStatus::Paused => self.audio.send(AudioCommand::Resume),
             PlaybackStatus::Stopped => {
                 let at_cursor = match (self.view, self.cursor_row()) {
-                    (View::Playlist, Some(Row::Track(i))) => self.current_group().tracks.get(i).map(|t| t.uid),
+                    (View::Playlist, Some(Row::Track(i))) => {
+                        self.current_group().tracks.get(i).map(|t| t.uid)
+                    }
                     _ => None,
                 };
                 let target = at_cursor
-                    .or(self.last_played.filter(|&u| self.root.track_by_uid(u).is_some()))
+                    .or(self
+                        .last_played
+                        .filter(|&u| self.root.track_by_uid(u).is_some()))
                     .or_else(|| self.engine.next(&play_state!(self), None));
                 match target {
                     Some(uid) => self.play(uid, true),
@@ -78,11 +89,14 @@ impl App {
             self.engine.successor(&play_state!(self), playing)
         } else {
             // The playing track was removed: keep what is queued while it still exists.
-            self.pending_queue.filter(|&u| self.root.locate(u).is_some())
+            self.pending_queue
+                .filter(|&u| self.root.locate(u).is_some())
         };
         if next != self.pending_queue {
             self.pending_queue = next;
-            let path = next.and_then(|u| self.root.track_by_uid(u)).map(|t| t.path.clone());
+            let path = next
+                .and_then(|u| self.root.track_by_uid(u))
+                .map(|t| t.path.clone());
             self.audio.send(AudioCommand::QueueNext(path));
         }
     }
@@ -105,12 +119,21 @@ impl App {
             .into_iter()
             .flatten()
             .find(|&u| self.root.track_by_uid(u).is_some_and(|t| t.path == path))
-            .or_else(|| self.root.find_path(path).and_then(|r| self.root.track(&r)).map(|t| t.uid))
+            .or_else(|| {
+                self.root
+                    .find_path(path)
+                    .and_then(|r| self.root.track(&r))
+                    .map(|t| t.uid)
+            })
     }
 
     fn on_audio_event(&mut self, ev: AudioEvent) {
         match ev {
-            AudioEvent::TrackStarted { path, duration, info } => {
+            AudioEvent::TrackStarted {
+                path,
+                duration,
+                info,
+            } => {
                 let track = self.resolve(&path);
                 self.failures = 0;
                 self.pending_load = None;
@@ -119,17 +142,29 @@ impl App {
                     self.last_played = Some(uid);
                     self.engine.started(uid);
                 }
-                self.now = Some(NowPlaying { track, path, info, duration });
+                self.now = Some(NowPlaying {
+                    track,
+                    path,
+                    info,
+                    duration,
+                });
                 self.pending_queue = None;
                 self.requeue_after_start();
             }
-            AudioEvent::TrackFailed { path, error, missing } => {
+            AudioEvent::TrackFailed {
+                path,
+                error,
+                missing,
+            } => {
                 let track = self.resolve(&path);
                 if let Some(t) = track.and_then(|u| self.root.track_by_uid_mut(u)) {
                     t.missing = missing;
                     t.broken = !missing;
                 }
-                let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
                 self.banner(BannerLevel::Warning, format!("{name}: {error}"));
                 self.failures += 1;
                 // Spec §8.3: give up after as many consecutive failures as there are tracks.
@@ -143,13 +178,17 @@ impl App {
                 let skip_to = self.engine.next(&play_state!(self), Some(uid));
                 if self.pending_queue == Some(uid) {
                     self.pending_queue = skip_to;
-                    let p = skip_to.and_then(|u| self.root.track_by_uid(u)).map(|t| t.path.clone());
+                    let p = skip_to
+                        .and_then(|u| self.root.track_by_uid(u))
+                        .map(|t| t.path.clone());
                     self.audio.send(AudioCommand::QueueNext(p));
                 } else if self.pending_load == Some(uid) {
                     self.pending_load = None;
                     match skip_to {
                         Some(next) => self.play(next, false),
-                        None => self.banner(BannerLevel::Warning, "No playable track to continue with"),
+                        None => {
+                            self.banner(BannerLevel::Warning, "No playable track to continue with")
+                        }
                     }
                 }
             }
@@ -159,7 +198,11 @@ impl App {
                 self.pending_queue = None;
             }
             AudioEvent::DeviceLost(msg) => {
-                self.banner = Some(Banner { text: msg, level: BannerLevel::Error, until: None });
+                self.banner = Some(Banner {
+                    text: msg,
+                    level: BannerLevel::Error,
+                    until: None,
+                });
             }
             AudioEvent::DeviceRestored(name) => {
                 self.banner(BannerLevel::Info, format!("Audio output: {name}"));
@@ -170,9 +213,13 @@ impl App {
 
     /// Queues the successor of the track that just started (always sends, even `None`).
     fn requeue_after_start(&mut self) {
-        let next = self.playing.and_then(|p| self.engine.successor(&play_state!(self), p));
+        let next = self
+            .playing
+            .and_then(|p| self.engine.successor(&play_state!(self), p));
         self.pending_queue = next;
-        let path = next.and_then(|u| self.root.track_by_uid(u)).map(|t| t.path.clone());
+        let path = next
+            .and_then(|u| self.root.track_by_uid(u))
+            .map(|t| t.path.clone());
         self.audio.send(AudioCommand::QueueNext(path));
     }
 }

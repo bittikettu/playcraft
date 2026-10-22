@@ -22,7 +22,10 @@ pub fn roots() -> Vec<Root> {
     }
     #[cfg(not(windows))]
     {
-        vec![Root { path: PathBuf::from("/"), kind: "Root" }]
+        vec![Root {
+            path: PathBuf::from("/"),
+            kind: "Root",
+        }]
     }
 }
 
@@ -37,7 +40,9 @@ pub fn is_hidden(path: &Path, meta: &Metadata) -> bool {
     #[cfg(not(windows))]
     {
         let _ = meta;
-        path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.'))
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with('.'))
     }
 }
 

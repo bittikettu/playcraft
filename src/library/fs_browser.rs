@@ -13,9 +13,11 @@ use crate::platform;
 pub const PLAYLIST_EXTENSIONS: &[&str] = &["m3u", "m3u8", "pls", "blst"];
 
 pub fn is_playlist_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| PLAYLIST_EXTENSIONS.iter().any(|p| p.eq_ignore_ascii_case(e)))
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        PLAYLIST_EXTENSIONS
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(e))
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -37,7 +39,10 @@ pub struct FsEntry {
 impl FsEntry {
     /// Entries that can be selected and added (folders, audio files and playlists).
     pub fn is_selectable(&self) -> bool {
-        matches!(self.kind, EntryKind::Dir | EntryKind::Audio | EntryKind::Playlist)
+        matches!(
+            self.kind,
+            EntryKind::Dir | EntryKind::Audio | EntryKind::Playlist
+        )
     }
 }
 
@@ -84,13 +89,19 @@ pub fn list(location: &Location, show_hidden: bool) -> std::io::Result<Vec<FsEnt
         }
         Location::Dir(dir) => dir,
     };
-    let mut entries = vec![FsEntry { path: PathBuf::new(), name: "..".into(), kind: EntryKind::Parent }];
+    let mut entries = vec![FsEntry {
+        path: PathBuf::new(),
+        name: "..".into(),
+        kind: EntryKind::Parent,
+    }];
     let mut items = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let Ok(entry) = entry else { continue };
         let path = entry.path();
         // Follows symlinks/junctions so linked music folders behave like real ones.
-        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
         if !show_hidden && platform::is_hidden(&path, &meta) {
             continue;
         }
@@ -108,7 +119,9 @@ pub fn list(location: &Location, show_hidden: bool) -> std::io::Result<Vec<FsEnt
     }
     items.sort_by(|a, b| {
         let rank = |k: EntryKind| if k == EntryKind::Dir { 0 } else { 1 };
-        rank(a.kind).cmp(&rank(b.kind)).then_with(|| natural_cmp(&a.name, &b.name))
+        rank(a.kind)
+            .cmp(&rank(b.kind))
+            .then_with(|| natural_cmp(&a.name, &b.name))
     });
     entries.extend(items);
     Ok(entries)
@@ -119,39 +132,42 @@ pub fn list(location: &Location, show_hidden: bool) -> std::io::Result<Vec<FsEnt
 /// channel closes when done.
 pub fn scan_recursive(paths: Vec<PathBuf>) -> Receiver<Vec<PathBuf>> {
     let (tx, rx) = bounded(64);
-    let _ = thread::Builder::new().name("folder-scan".into()).spawn(move || {
-        let mut batch = Vec::with_capacity(256);
-        for dir in paths {
-            if !dir.is_dir() {
-                if is_audio_file(&dir) {
-                    batch.push(dir);
+    let _ = thread::Builder::new()
+        .name("folder-scan".into())
+        .spawn(move || {
+            let mut batch = Vec::with_capacity(256);
+            for dir in paths {
+                if !dir.is_dir() {
+                    if is_audio_file(&dir) {
+                        batch.push(dir);
+                    }
+                    continue;
                 }
-                continue;
-            }
-            let walk = WalkDir::new(&dir)
-                .follow_links(true)
-                .sort_by(|a, b| {
+                let walk = WalkDir::new(&dir).follow_links(true).sort_by(|a, b| {
                     let rank = |e: &walkdir::DirEntry| u8::from(!e.file_type().is_dir());
-                    rank(a)
-                        .cmp(&rank(b))
-                        .then_with(|| natural_cmp(&a.file_name().to_string_lossy(), &b.file_name().to_string_lossy()))
+                    rank(a).cmp(&rank(b)).then_with(|| {
+                        natural_cmp(
+                            &a.file_name().to_string_lossy(),
+                            &b.file_name().to_string_lossy(),
+                        )
+                    })
                 });
-            for entry in walk.into_iter().filter_map(Result::ok) {
-                if entry.file_type().is_file() && is_audio_file(entry.path()) {
-                    batch.push(entry.into_path());
-                    if batch.len() == batch.capacity() {
-                        if tx.send(std::mem::take(&mut batch)).is_err() {
-                            return;
+                for entry in walk.into_iter().filter_map(Result::ok) {
+                    if entry.file_type().is_file() && is_audio_file(entry.path()) {
+                        batch.push(entry.into_path());
+                        if batch.len() == batch.capacity() {
+                            if tx.send(std::mem::take(&mut batch)).is_err() {
+                                return;
+                            }
+                            batch.reserve(256);
                         }
-                        batch.reserve(256);
                     }
                 }
             }
-        }
-        if !batch.is_empty() {
-            let _ = tx.send(batch);
-        }
-    });
+            if !batch.is_empty() {
+                let _ = tx.send(batch);
+            }
+        });
     rx
 }
 
@@ -173,7 +189,17 @@ mod tests {
         }
         let entries = list(&Location::Dir(dir.path().to_path_buf()), false).unwrap();
         let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, vec!["..", "A album", "b album", "2 song.FLAC", "10 song.mp3", "list.m3u8"]);
+        assert_eq!(
+            names,
+            vec![
+                "..",
+                "A album",
+                "b album",
+                "2 song.FLAC",
+                "10 song.mp3",
+                "list.m3u8"
+            ]
+        );
         assert_eq!(entries[5].kind, EntryKind::Playlist);
         assert!(!entries[0].is_selectable());
     }
@@ -184,11 +210,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let hidden = dir.path().join("secret.mp3");
         touch(&hidden);
-        let status = std::process::Command::new("attrib").arg("+h").arg(&hidden).status().unwrap();
+        let status = std::process::Command::new("attrib")
+            .arg("+h")
+            .arg(&hidden)
+            .status()
+            .unwrap();
         assert!(status.success());
         let loc = Location::Dir(dir.path().to_path_buf());
-        assert!(!list(&loc, false).unwrap().iter().any(|e| e.name == "secret.mp3"));
-        assert!(list(&loc, true).unwrap().iter().any(|e| e.name == "secret.mp3"));
+        assert!(
+            !list(&loc, false)
+                .unwrap()
+                .iter()
+                .any(|e| e.name == "secret.mp3")
+        );
+        assert!(
+            list(&loc, true)
+                .unwrap()
+                .iter()
+                .any(|e| e.name == "secret.mp3")
+        );
     }
 
     #[test]
@@ -214,7 +254,10 @@ mod tests {
         touch(&cd2.join("1.flac"));
         touch(&dir.path().join("intro.ogg"));
         touch(&dir.path().join("readme.txt"));
-        let files: Vec<PathBuf> = scan_recursive(vec![dir.path().to_path_buf()]).iter().flatten().collect();
+        let files: Vec<PathBuf> = scan_recursive(vec![dir.path().to_path_buf()])
+            .iter()
+            .flatten()
+            .collect();
         assert_eq!(files.len(), 302);
         assert!(files[0].ends_with(Path::new("CD1").join("1.mp3")));
         assert!(files[1].ends_with(Path::new("CD1").join("2.mp3")));

@@ -53,7 +53,11 @@ pub fn init(level: LevelFilter, file: Option<&Path>) -> &'static RingLogger {
         RingLogger {
             start: Instant::now(),
             level,
-            inner: Mutex::new(Inner { lines: VecDeque::with_capacity(CAPACITY), next_seq: 1, file }),
+            inner: Mutex::new(Inner {
+                lines: VecDeque::with_capacity(CAPACITY),
+                next_seq: 1,
+                file,
+            }),
         }
     });
     if installed && log::set_logger(logger).is_ok() {
@@ -71,7 +75,12 @@ impl RingLogger {
     /// All retained lines with a sequence number greater than `seq`.
     pub fn lines_after(&self, seq: u64) -> Vec<LogLine> {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.lines.iter().filter(|l| l.seq > seq).cloned().collect()
+        inner
+            .lines
+            .iter()
+            .filter(|l| l.seq > seq)
+            .cloned()
+            .collect()
     }
 
     pub fn snapshot(&self) -> Vec<LogLine> {
@@ -104,7 +113,12 @@ impl Log for RingLogger {
         if inner.lines.len() == CAPACITY {
             inner.lines.pop_front();
         }
-        inner.lines.push_back(LogLine { seq, level: record.level(), elapsed_secs, message });
+        inner.lines.push_back(LogLine {
+            seq,
+            level: record.level(),
+            elapsed_secs,
+            message,
+        });
     }
 
     fn flush(&self) {
@@ -125,7 +139,10 @@ mod tests {
         log::warn!("first warning");
         log::info!("second line");
         let lines = logger.snapshot();
-        let first = lines.iter().find(|l| l.message == "first warning").expect("logged");
+        let first = lines
+            .iter()
+            .find(|l| l.message == "first warning")
+            .expect("logged");
         assert_eq!(first.level, Level::Warn);
         let newer = logger.lines_after(first.seq);
         assert!(newer.iter().any(|l| l.message == "second line"));

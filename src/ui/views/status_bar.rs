@@ -12,7 +12,10 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, compact: bool) {
     let inner = if compact {
         area
     } else {
-        let block = Block::bordered().border_style(theme.border).style(theme.base);
+        let block = Block::bordered()
+            .border_set(app.symbols.border)
+            .border_style(theme.border)
+            .style(theme.base);
         let inner = block.inner(area);
         f.render_widget(block, area);
         inner
@@ -36,7 +39,10 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, compact: bool) {
             BannerLevel::Warning => theme.warning,
             BannerLevel::Error => theme.error,
         };
-        f.render_widget(Paragraph::new(Line::styled(truncate(&banner.text, width, ell), style)), inner);
+        f.render_widget(
+            Paragraph::new(Line::styled(truncate(&banner.text, width, ell), style)),
+            inner,
+        );
         return;
     }
 

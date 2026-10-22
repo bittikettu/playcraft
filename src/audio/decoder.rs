@@ -74,9 +74,14 @@ struct SelectedTrack {
 
 /// Picks the default audio track and builds a codec for it.
 fn select_track(reader: &dyn FormatReader) -> Result<SelectedTrack, DecoderError> {
-    let track = reader.default_track(TrackType::Audio).ok_or(DecoderError::NoAudioTrack)?;
-    let params =
-        track.codec_params.as_ref().and_then(|p| p.audio()).ok_or(DecoderError::NoAudioTrack)?;
+    let track = reader
+        .default_track(TrackType::Audio)
+        .ok_or(DecoderError::NoAudioTrack)?;
+    let params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or(DecoderError::NoAudioTrack)?;
     let codec = guarded(|| {
         symphonia::default::get_codecs().make_audio_decoder(params, &AudioDecoderOptions::default())
     })?
@@ -97,7 +102,10 @@ fn select_track(reader: &dyn FormatReader) -> Result<SelectedTrack, DecoderError
         codec,
         track_id: track.id,
         time_base: track.time_base,
-        format: SourceFormat { sample_rate, channels },
+        format: SourceFormat {
+            sample_rate,
+            channels,
+        },
         duration,
     })
 }
@@ -107,7 +115,9 @@ fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, DecoderError> {
 }
 
 fn time_to_duration(t: Time) -> Duration {
-    u64::try_from(t.as_nanos()).map(Duration::from_nanos).unwrap_or_default()
+    u64::try_from(t.as_nanos())
+        .map(Duration::from_nanos)
+        .unwrap_or_default()
 }
 
 fn frames_to_duration(frames: u64, rate: u32) -> Duration {
@@ -256,7 +266,10 @@ impl Decoder {
             if frames == 0 || channels == 0 || rate == 0 {
                 continue;
             }
-            self.format = SourceFormat { sample_rate: rate, channels };
+            self.format = SourceFormat {
+                sample_rate: rate,
+                channels,
+            };
 
             let mut skip = 0usize;
             if let Some(target) = self.seek_target {
@@ -267,7 +280,9 @@ impl Decoder {
                 }
                 self.seek_target = None;
                 if pts < target {
-                    skip = self.ts_delta_to_frames(pts, target, rate).min(frames as u64) as usize;
+                    skip = self
+                        .ts_delta_to_frames(pts, target, rate)
+                        .min(frames as u64) as usize;
                 }
             }
             let samples = &self.buf[skip * channels..frames * channels];
@@ -306,7 +321,13 @@ impl Decoder {
         let time = Time::try_from_nanos_u128(to.as_nanos()).unwrap_or(Time::ZERO);
         let track_id = self.track_id;
         let seeked = guarded(|| {
-            self.reader.seek(SeekMode::Accurate, SeekTo::Time { time, track_id: Some(track_id) })
+            self.reader.seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time,
+                    track_id: Some(track_id),
+                },
+            )
         })?;
         match seeked {
             Ok(seeked) => {
@@ -319,9 +340,8 @@ impl Decoder {
                     .and_then(|tb| tb.calc_time(seeked.required_ts))
                     .map(time_to_duration)
                     .unwrap_or(to);
-                self.position_frames = (resumed.as_secs_f64()
-                    * f64::from(self.format.sample_rate))
-                .round() as u64;
+                self.position_frames =
+                    (resumed.as_secs_f64() * f64::from(self.format.sample_rate)).round() as u64;
                 Ok(resumed)
             }
             // Seeking past the end (or into an unseekable tail) simply ends the track.
@@ -339,7 +359,10 @@ mod tests {
     use super::*;
 
     pub(crate) fn fixture(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join(name)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
     }
 
     fn decode_all(dec: &mut Decoder) -> Vec<f32> {
@@ -377,7 +400,11 @@ mod tests {
 
     #[test]
     fn lossless_seek_is_frame_accurate() {
-        for name in ["sine_44k_stereo.wav", "sine_44k_stereo.flac", "chirp_full.flac"] {
+        for name in [
+            "sine_44k_stereo.wav",
+            "sine_44k_stereo.flac",
+            "chirp_full.flac",
+        ] {
             let mut full = Decoder::open(&fixture(name)).unwrap();
             let all = decode_all(&mut full);
             let fmt = full.format();
@@ -388,20 +415,31 @@ mod tests {
             let after = decode_all(&mut dec);
             let offset = fmt.sample_rate as usize * fmt.channels;
             assert_eq!(after.len(), all.len() - offset, "{name}: length after seek");
-            assert_eq!(&after[..256], &all[offset..offset + 256], "{name}: samples after seek");
+            assert_eq!(
+                &after[..256],
+                &all[offset..offset + 256],
+                "{name}: samples after seek"
+            );
         }
     }
 
     #[test]
     fn lossy_seek_lands_near_target() {
-        for name in ["sine_44k_cbr.mp3", "sine_44k_stereo.ogg", "sine_44k_stereo.m4a"] {
+        for name in [
+            "sine_44k_cbr.mp3",
+            "sine_44k_stereo.ogg",
+            "sine_44k_stereo.m4a",
+        ] {
             let mut dec = Decoder::open(&fixture(name)).unwrap();
             let resumed = dec.seek(Duration::from_millis(1500)).unwrap();
             assert!(resumed <= Duration::from_millis(1500), "{name}");
             let rest = decode_all(&mut dec);
             let fmt = dec.format();
             let secs = rest.len() as f64 / fmt.channels as f64 / f64::from(fmt.sample_rate);
-            assert!((secs - 0.5).abs() < 0.06, "{name}: {secs:.3} s left after seek");
+            assert!(
+                (secs - 0.5).abs() < 0.06,
+                "{name}: {secs:.3} s left after seek"
+            );
         }
     }
 
@@ -440,7 +478,9 @@ mod tests {
         let mut full = Decoder::open(&fixture("chirp_full.flac")).unwrap();
         let all = decode_all(&mut full);
         let mut joined = decode_all(&mut Decoder::open(&fixture("chirp_part1.flac")).unwrap());
-        joined.extend(decode_all(&mut Decoder::open(&fixture("chirp_part2.flac")).unwrap()));
+        joined.extend(decode_all(
+            &mut Decoder::open(&fixture("chirp_part2.flac")).unwrap(),
+        ));
         assert_eq!(joined.len(), all.len());
         assert!(joined == all, "split halves differ from the full chirp");
     }

@@ -59,9 +59,17 @@ pub struct StreamInfo {
 #[derive(Debug, Clone)]
 pub enum AudioEvent {
     /// A track became audible (sent when its first sample reaches the device).
-    TrackStarted { path: PathBuf, duration: Option<Duration>, info: StreamInfo },
+    TrackStarted {
+        path: PathBuf,
+        duration: Option<Duration>,
+        info: StreamInfo,
+    },
     /// A track could not be opened or played. `missing` means the file does not exist.
-    TrackFailed { path: PathBuf, error: String, missing: bool },
+    TrackFailed {
+        path: PathBuf,
+        error: String,
+        missing: bool,
+    },
     /// The last track finished and nothing was queued.
     Finished,
     DeviceLost(String),
@@ -80,7 +88,12 @@ pub struct AudioConfig {
 
 impl Default for AudioConfig {
     fn default() -> Self {
-        AudioConfig { output_device: None, buffer_ms: 150, gapless: true, volume: 0.8 }
+        AudioConfig {
+            output_device: None,
+            buffer_ms: 150,
+            gapless: true,
+            volume: 0.8,
+        }
     }
 }
 
@@ -127,11 +140,20 @@ impl AudioBackend for CpalBackend {
             other => other?,
         };
         let format = choice.format();
-        let (producer, renderer, tap) =
-            render::create(shared.clone(), format.channels, ring_frames(buffer_ms, format.sample_rate));
+        let (producer, renderer, tap) = render::create(
+            shared.clone(),
+            format.channels,
+            ring_frames(buffer_ms, format.sample_rate),
+        );
         let name = choice.name().to_string();
         let output = choice.start(renderer, faults)?;
-        Ok(OpenedSink { producer, tap, format, name, keepalive: Box::new(output) })
+        Ok(OpenedSink {
+            producer,
+            tap,
+            format,
+            name,
+            keepalive: Box::new(output),
+        })
     }
 }
 
@@ -154,8 +176,16 @@ impl AudioBackend for ManualBackend {
             self.format.channels,
             ring_frames(buffer_ms, self.format.sample_rate),
         );
-        self.renderers.send(renderer).map_err(|_| OutputError::NoDevice)?;
-        Ok(OpenedSink { producer, tap, format: self.format, name: "manual".into(), keepalive: Box::new(()) })
+        self.renderers
+            .send(renderer)
+            .map_err(|_| OutputError::NoDevice)?;
+        Ok(OpenedSink {
+            producer,
+            tap,
+            format: self.format,
+            name: "manual".into(),
+            keepalive: Box::new(()),
+        })
     }
 }
 
@@ -171,7 +201,9 @@ pub struct AudioHandle {
 impl AudioHandle {
     /// Starts the controller with real audio output.
     pub fn spawn(config: AudioConfig) -> Self {
-        let backend = CpalBackend { preferred: config.output_device.clone() };
+        let backend = CpalBackend {
+            preferred: config.output_device.clone(),
+        };
         Self::spawn_with_backend(config, Box::new(backend))
     }
 
@@ -198,7 +230,13 @@ impl AudioHandle {
                 })
                 .expect("spawn audio controller thread")
         };
-        AudioHandle { commands: cmd_tx, events: ev_rx, shared, tap, thread: Some(thread) }
+        AudioHandle {
+            commands: cmd_tx,
+            events: ev_rx,
+            shared,
+            tap,
+            thread: Some(thread),
+        }
     }
 
     pub fn send(&self, command: AudioCommand) {
@@ -270,7 +308,11 @@ fn track_info(decoder: &Decoder) -> Arc<TrackInfo> {
 }
 
 fn frames_to_duration(frames: u64, rate: u32) -> Duration {
-    if rate == 0 { Duration::ZERO } else { Duration::from_secs_f64(frames as f64 / f64::from(rate)) }
+    if rate == 0 {
+        Duration::ZERO
+    } else {
+        Duration::from_secs_f64(frames as f64 / f64::from(rate))
+    }
 }
 
 struct Controller {
@@ -417,7 +459,11 @@ impl Controller {
             AudioCommand::SeekRelative(secs) => {
                 let pos = self.shared.position();
                 let delta = Duration::from_secs(secs.unsigned_abs());
-                let target = if secs < 0 { pos.saturating_sub(delta) } else { pos + delta };
+                let target = if secs < 0 {
+                    pos.saturating_sub(delta)
+                } else {
+                    pos + delta
+                };
                 self.seek_to(target);
             }
             AudioCommand::SeekAbsolute(target) => self.seek_to(target),
@@ -434,7 +480,11 @@ impl Controller {
     fn report_failure(&self, path: PathBuf, err: &DecoderError) {
         log::warn!("{}: {err}", path.display());
         let missing = matches!(err, DecoderError::NotFound);
-        self.emit(AudioEvent::TrackFailed { path, error: err.to_string(), missing });
+        self.emit(AudioEvent::TrackFailed {
+            path,
+            error: err.to_string(),
+            missing,
+        });
     }
 
     fn load_and_play(&mut self, path: PathBuf) {
@@ -501,7 +551,9 @@ impl Controller {
         self.out_pos = 0;
         self.resampler = None;
         self.eof = false;
-        let Some(cur) = self.current.as_mut() else { return };
+        let Some(cur) = self.current.as_mut() else {
+            return;
+        };
         match cur.decoder.seek(target) {
             Ok(resumed) => {
                 self.segments.push_back(Segment {
@@ -553,7 +605,9 @@ impl Controller {
     /// Completes a deferred flush once the callback has acknowledged it.
     /// Returns false while it is still outstanding.
     fn settle_flush(&mut self) -> bool {
-        let Some((request, written_at_flush)) = self.pending_flush else { return true };
+        let Some((request, written_at_flush)) = self.pending_flush else {
+            return true;
+        };
         if self.shared.flush_ack.load(Ordering::Acquire) < request {
             return false;
         }
@@ -592,7 +646,9 @@ impl Controller {
             return;
         }
         loop {
-            let Some(sink) = self.sink.as_mut() else { return };
+            let Some(sink) = self.sink.as_mut() else {
+                return;
+            };
             if self.out_pos < self.out_buf.len() {
                 let ch = sink.format.channels;
                 let vacant = sink.producer.vacant_len() / ch * ch;
@@ -620,8 +676,12 @@ impl Controller {
         if self.eof {
             return false;
         }
-        let Some(device) = self.sink.as_ref().map(|s| s.format) else { return false };
-        let Some(cur) = self.current.as_mut() else { return false };
+        let Some(device) = self.sink.as_ref().map(|s| s.format) else {
+            return false;
+        };
+        let Some(cur) = self.current.as_mut() else {
+            return false;
+        };
         let chunk = match cur.decoder.next_chunk() {
             Ok(Some(samples)) => {
                 self.scratch.clear();
@@ -701,9 +761,14 @@ impl Controller {
     /// Continues the output stream with `decoder`, seamlessly when the format allows it.
     fn continue_with(&mut self, decoder: Decoder) {
         let format = decoder.format();
-        let seamless = self.config.gapless && self.resampler.as_ref().is_some_and(|r| r.accepts(format));
+        let seamless =
+            self.config.gapless && self.resampler.as_ref().is_some_and(|r| r.accepts(format));
         let start_frame = if seamless {
-            self.rs_epoch + self.resampler.as_ref().map_or(0, |r| r.output_frames_for_input())
+            self.rs_epoch
+                + self
+                    .resampler
+                    .as_ref()
+                    .map_or(0, |r| r.output_frames_for_input())
         } else {
             if let Some(mut r) = self.resampler.take() {
                 r.finish(&mut self.out_buf);
@@ -727,7 +792,9 @@ impl Controller {
         if self.pending_flush.is_some() {
             return;
         }
-        let Some(sink) = self.sink.as_ref() else { return };
+        let Some(sink) = self.sink.as_ref() else {
+            return;
+        };
         let rate = sink.format.sample_rate;
         let played = self.shared.frames_played.load(Ordering::Acquire);
         while self.segments.len() > 1 && self.segments[1].start_frame <= played {
@@ -770,7 +837,9 @@ impl Controller {
     fn open_sink(&mut self) -> Result<(), OutputError> {
         self.sink = None;
         self.shared.frames_played.store(0, Ordering::Release);
-        let opened = self.backend.open(&self.shared, self.config.buffer_ms, self.fault_tx.clone())?;
+        let opened =
+            self.backend
+                .open(&self.shared, self.config.buffer_ms, self.fault_tx.clone())?;
         // Faults queued by a previous stream are stale now.
         while self.fault_rx.try_recv().is_ok() {}
         self.shared.set_device_rate(opened.format.sample_rate);
@@ -829,7 +898,11 @@ impl Controller {
         if fault == StreamFault::Invalidated {
             match self.reopen_at(position) {
                 Ok(()) => {
-                    let name = self.sink.as_ref().map(|s| s.name.clone()).unwrap_or_default();
+                    let name = self
+                        .sink
+                        .as_ref()
+                        .map(|s| s.name.clone())
+                        .unwrap_or_default();
                     log::info!("audio output moved to {name}");
                     self.emit(AudioEvent::DeviceRestored(name));
                     return;
@@ -853,7 +926,11 @@ impl Controller {
         match self.reopen_at(position) {
             Ok(()) => {
                 self.device_lost_reported = false;
-                let name = self.sink.as_ref().map(|s| s.name.clone()).unwrap_or_default();
+                let name = self
+                    .sink
+                    .as_ref()
+                    .map(|s| s.name.clone())
+                    .unwrap_or_default();
                 log::info!("audio output available: {name}");
                 self.emit(AudioEvent::DeviceRestored(name));
             }
@@ -864,4 +941,3 @@ impl Controller {
         }
     }
 }
-

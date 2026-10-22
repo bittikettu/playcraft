@@ -42,24 +42,43 @@ fn from_blst(g: BlstGroup, base: &Path) -> Group {
         id: 0,
         name: g.name,
         shuffle: g.shuffle,
-        tracks: g.tracks.iter().map(|p| Track::new(resolve_entry(base, p))).collect(),
-        subgroups: g.subgroups.into_iter().map(|s| from_blst(s, base)).collect(),
+        tracks: g
+            .tracks
+            .iter()
+            .map(|p| Track::new(resolve_entry(base, p)))
+            .collect(),
+        subgroups: g
+            .subgroups
+            .into_iter()
+            .map(|s| from_blst(s, base))
+            .collect(),
     }
 }
 
 pub fn parse(text: &str, base: &Path) -> Result<Group, PlaylistError> {
-    let file: BlstFile = serde_json::from_str(text).map_err(|e| PlaylistError::Parse(e.to_string()))?;
+    let file: BlstFile =
+        serde_json::from_str(text).map_err(|e| PlaylistError::Parse(e.to_string()))?;
     if file.format != FORMAT {
-        return Err(PlaylistError::Parse(format!("unexpected format \"{}\"", file.format)));
+        return Err(PlaylistError::Parse(format!(
+            "unexpected format \"{}\"",
+            file.format
+        )));
     }
     if file.version > VERSION {
-        return Err(PlaylistError::Parse(format!("made by a newer version (format {})", file.version)));
+        return Err(PlaylistError::Parse(format!(
+            "made by a newer version (format {})",
+            file.version
+        )));
     }
     Ok(from_blst(file.root, base))
 }
 
 pub fn write(root: &Group, base: &Path) -> Result<String, PlaylistError> {
-    let file = BlstFile { format: FORMAT.into(), version: VERSION, root: to_blst(root, base) };
+    let file = BlstFile {
+        format: FORMAT.into(),
+        version: VERSION,
+        root: to_blst(root, base),
+    };
     serde_json::to_string_pretty(&file).map_err(|e| PlaylistError::Parse(e.to_string()))
 }
 

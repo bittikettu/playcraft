@@ -37,7 +37,8 @@ pub fn create(
     capacity_frames: usize,
 ) -> (HeapProd<f32>, Renderer, HeapCons<f32>) {
     let channels = channels.max(1);
-    let (prod, cons) = ringbuf::traits::Split::split(HeapRb::<f32>::new(capacity_frames * channels));
+    let (prod, cons) =
+        ringbuf::traits::Split::split(HeapRb::<f32>::new(capacity_frames * channels));
     let (tap_prod, tap_cons) = ringbuf::traits::Split::split(HeapRb::<f32>::new(TAP_CAPACITY));
     let acked_flush = shared.flush_request.load(Ordering::Acquire);
     shared.flush_ack.store(acked_flush, Ordering::Release);
@@ -89,7 +90,11 @@ impl Renderer {
 
         // Spectrum tap (pre-volume, mono mix). Drops samples when the UI is not draining it.
         let inv_ch = 1.0 / ch as f32;
-        self.tap.push_iter(out[..got].chunks_exact(ch).map(|f| f.iter().sum::<f32>() * inv_ch));
+        self.tap.push_iter(
+            out[..got]
+                .chunks_exact(ch)
+                .map(|f| f.iter().sum::<f32>() * inv_ch),
+        );
 
         let target_gain = self.shared.gain();
         let target_fade = if fading_out { 0.0 } else { 1.0 };
@@ -106,7 +111,9 @@ impl Renderer {
             // Nothing left to fade: jump straight to silence so the flush/pause can complete.
             self.fade = 0.0;
         }
-        self.shared.frames_played.fetch_add((got / ch) as u64, Ordering::Relaxed);
+        self.shared
+            .frames_played
+            .fetch_add((got / ch) as u64, Ordering::Relaxed);
     }
 
     /// Samples currently buffered (for tests and diagnostics).
@@ -149,7 +156,11 @@ mod tests {
         prod.push_iter(std::iter::repeat_n(0.5, 200));
         let mut out = vec![0.0; 200];
         r.fill(&mut out);
-        assert!(out.iter().all(|&s| (s - 0.5).abs() < 1e-6), "{:?}", &out[..4]);
+        assert!(
+            out.iter().all(|&s| (s - 0.5).abs() < 1e-6),
+            "{:?}",
+            &out[..4]
+        );
         assert_eq!(shared.frames_played.load(Ordering::Relaxed), 512 + 100);
     }
 
@@ -161,9 +172,16 @@ mod tests {
         prod.push_iter(std::iter::repeat_n(1.0, 8192));
         let mut out = vec![0.0; 8192];
         r.fill(&mut out);
-        let max_step = out.windows(2).map(|w| (w[0] - w[1]).abs()).fold(0.0, f32::max);
+        let max_step = out
+            .windows(2)
+            .map(|w| (w[0] - w[1]).abs())
+            .fold(0.0, f32::max);
         assert!(max_step < 0.01, "volume jumped by {max_step}");
-        assert!(out[out.len() - 1] < 0.01, "gain did not settle: {}", out[out.len() - 1]);
+        assert!(
+            out[out.len() - 1] < 0.01,
+            "gain did not settle: {}",
+            out[out.len() - 1]
+        );
     }
 
     #[test]

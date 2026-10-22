@@ -48,12 +48,17 @@ fn unit_tracks(g: &Group, rng: &mut StdRng) -> Vec<u64> {
 /// The play order for the subtree at `scope`. Each group is a "unit" (its own tracks), in
 /// pre-order; a group's tracks are shuffled when its shuffle flag is set.
 pub fn build_order(root: &Group, scope: &[usize], mode: PlayMode, rng: &mut StdRng) -> Vec<u64> {
-    let Some(base) = root.group_at(scope) else { return Vec::new() };
+    let Some(base) = root.group_at(scope) else {
+        return Vec::new();
+    };
     let mut units = Vec::new();
     base.walk(&mut |g| units.push(g));
     match mode {
         PlayMode::AllTracksShuffled => {
-            let mut all: Vec<u64> = units.iter().flat_map(|g| g.tracks.iter().map(|t| t.uid)).collect();
+            let mut all: Vec<u64> = units
+                .iter()
+                .flat_map(|g| g.tracks.iter().map(|t| t.uid))
+                .collect();
             all.shuffle(rng);
             all
         }
@@ -61,7 +66,9 @@ pub fn build_order(root: &Group, scope: &[usize], mode: PlayMode, rng: &mut StdR
             units.shuffle(rng);
             units.iter().flat_map(|g| unit_tracks(g, rng)).collect()
         }
-        PlayMode::CurrentGroup | PlayMode::AllGroups => units.iter().flat_map(|g| unit_tracks(g, rng)).collect(),
+        PlayMode::CurrentGroup | PlayMode::AllGroups => {
+            units.iter().flat_map(|g| unit_tracks(g, rng)).collect()
+        }
     }
 }
 
@@ -115,7 +122,8 @@ impl Engine {
     }
 
     fn scope(&self, st: &PlayState<'_>) -> Vec<usize> {
-        let group_scoped = st.mode == PlayMode::CurrentGroup || st.repeat == RepeatMode::RepeatGroup;
+        let group_scoped =
+            st.mode == PlayMode::CurrentGroup || st.repeat == RepeatMode::RepeatGroup;
         if group_scoped && st.root.group_at(&self.anchor).is_some() {
             return self.anchor.clone();
         }
@@ -129,7 +137,8 @@ impl Engine {
             return;
         }
         let fresh = build_order(st.root, &scope, st.mode, &mut self.rng);
-        let mut randomized = st.mode == PlayMode::AllTracksShuffled || st.mode == PlayMode::AllGroupsShuffled;
+        let mut randomized =
+            st.mode == PlayMode::AllTracksShuffled || st.mode == PlayMode::AllGroupsShuffled;
         if let Some(base) = st.root.group_at(&scope) {
             base.walk(&mut |g| randomized |= g.shuffle);
         }
@@ -137,8 +146,12 @@ impl Engine {
             // Keep this cycle's already-played tracks in front so they are not repeated.
             let present: HashSet<u64> = fresh.iter().copied().collect();
             let mut seen = HashSet::new();
-            let mut order: Vec<u64> =
-                self.played.iter().copied().filter(|u| present.contains(u) && seen.insert(*u)).collect();
+            let mut order: Vec<u64> = self
+                .played
+                .iter()
+                .copied()
+                .filter(|u| present.contains(u) && seen.insert(*u))
+                .collect();
             order.extend(fresh.into_iter().filter(|u| !seen.contains(u)));
             order
         } else {
@@ -151,7 +164,9 @@ impl Engine {
     /// The track to play when the user asks for the next one (repeat-track is ignored).
     pub fn next(&mut self, st: &PlayState<'_>, current: Option<u64>) -> Option<u64> {
         self.ensure_order(st, false);
-        let start = current.and_then(|c| self.order.iter().position(|&u| u == c)).map_or(0, |p| p + 1);
+        let start = current
+            .and_then(|c| self.order.iter().position(|&u| u == c))
+            .map_or(0, |p| p + 1);
         if let Some(&u) = self.order[start..].iter().find(|&&u| playable(st.root, u)) {
             return Some(u);
         }
@@ -185,7 +200,11 @@ impl Engine {
         }
         self.ensure_order(st, false);
         let pos = current.and_then(|c| self.order.iter().position(|&u| u == c))?;
-        self.order[..pos].iter().rev().copied().find(|&u| playable(st.root, u))
+        self.order[..pos]
+            .iter()
+            .rev()
+            .copied()
+            .find(|&u| playable(st.root, u))
     }
 }
 
@@ -211,7 +230,9 @@ mod tests {
     }
 
     fn names(root: &Group, uids: &[u64]) -> Vec<String> {
-        uids.iter().map(|&u| root.track_by_uid(u).unwrap().path.display().to_string()).collect()
+        uids.iter()
+            .map(|&u| root.track_by_uid(u).unwrap().path.display().to_string())
+            .collect()
     }
 
     /// Plays from the start until the engine stops or `limit` tracks have played.
@@ -230,24 +251,39 @@ mod tests {
     }
 
     fn state(root: &Group, mode: PlayMode, repeat: RepeatMode) -> PlayState<'_> {
-        PlayState { root, mode, repeat, version: 0 }
+        PlayState {
+            root,
+            mode,
+            repeat,
+            version: 0,
+        }
     }
 
     #[test]
     fn all_groups_plays_in_playlist_order_and_stops() {
         let root = playlist();
         let mut e = Engine::new(Some(1));
-        let played = play_through(&mut e, &state(&root, PlayMode::AllGroups, RepeatMode::Off), 100);
+        let played = play_through(
+            &mut e,
+            &state(&root, PlayMode::AllGroups, RepeatMode::Off),
+            100,
+        );
         assert_eq!(
             names(&root, &played),
-            ["r0", "r1", "a0", "a1", "a2", "a1-0", "a1-1", "b0", "b1", "b2", "b3"]
+            [
+                "r0", "r1", "a0", "a1", "a2", "a1-0", "a1-1", "b0", "b1", "b2", "b3"
+            ]
         );
     }
 
     #[test]
     fn every_mode_plays_each_track_exactly_once_per_cycle() {
         let root = playlist();
-        for mode in [PlayMode::AllGroups, PlayMode::AllGroupsShuffled, PlayMode::AllTracksShuffled] {
+        for mode in [
+            PlayMode::AllGroups,
+            PlayMode::AllGroupsShuffled,
+            PlayMode::AllTracksShuffled,
+        ] {
             for seed in 0..20 {
                 let mut e = Engine::new(Some(seed));
                 let played = play_through(&mut e, &state(&root, mode, RepeatMode::Off), 100);
@@ -263,8 +299,15 @@ mod tests {
         let root = playlist();
         for seed in 0..20 {
             let mut e = Engine::new(Some(seed));
-            let played = play_through(&mut e, &state(&root, PlayMode::AllGroupsShuffled, RepeatMode::Off), 100);
-            let groups: Vec<Vec<usize>> = played.iter().map(|&u| root.locate(u).unwrap().group).collect();
+            let played = play_through(
+                &mut e,
+                &state(&root, PlayMode::AllGroupsShuffled, RepeatMode::Off),
+                100,
+            );
+            let groups: Vec<Vec<usize>> = played
+                .iter()
+                .map(|&u| root.locate(u).unwrap().group)
+                .collect();
             let mut runs = groups.clone();
             runs.dedup();
             assert_eq!(runs.len(), 4, "seed {seed}: a group was split: {groups:?}");
@@ -278,7 +321,11 @@ mod tests {
         let orders: HashSet<Vec<String>> = (0..20)
             .map(|seed| {
                 let mut e = Engine::new(Some(seed));
-                let played = play_through(&mut e, &state(&root, PlayMode::AllGroups, RepeatMode::Off), 100);
+                let played = play_through(
+                    &mut e,
+                    &state(&root, PlayMode::AllGroups, RepeatMode::Off),
+                    100,
+                );
                 names(&root, &played)
             })
             .collect();
@@ -311,18 +358,45 @@ mod tests {
         let (b0, b3) = (b.tracks[0].uid, b.tracks[3].uid);
 
         let mut e = Engine::new(Some(0));
-        assert_eq!(e.successor(&state(&root, PlayMode::AllGroups, RepeatMode::RepeatTrack), b0), Some(b0));
+        assert_eq!(
+            e.successor(
+                &state(&root, PlayMode::AllGroups, RepeatMode::RepeatTrack),
+                b0
+            ),
+            Some(b0)
+        );
         // Repeat-track does not stop the user from skipping.
-        assert_ne!(e.next(&state(&root, PlayMode::AllGroups, RepeatMode::RepeatTrack), Some(b0)), Some(b0));
+        assert_ne!(
+            e.next(
+                &state(&root, PlayMode::AllGroups, RepeatMode::RepeatTrack),
+                Some(b0)
+            ),
+            Some(b0)
+        );
 
         let mut e = Engine::new(Some(0));
-        assert_eq!(e.successor(&state(&root, PlayMode::AllGroups, RepeatMode::Off), b3), None);
+        assert_eq!(
+            e.successor(&state(&root, PlayMode::AllGroups, RepeatMode::Off), b3),
+            None
+        );
         let first = root.tracks[0].uid;
-        assert_eq!(e.successor(&state(&root, PlayMode::AllGroups, RepeatMode::RepeatAll), b3), Some(first));
+        assert_eq!(
+            e.successor(
+                &state(&root, PlayMode::AllGroups, RepeatMode::RepeatAll),
+                b3
+            ),
+            Some(first)
+        );
 
         let mut e = Engine::new(Some(0));
         e.anchor_at(&root, b0);
-        assert_eq!(e.successor(&state(&root, PlayMode::AllGroups, RepeatMode::RepeatGroup), b3), Some(b0));
+        assert_eq!(
+            e.successor(
+                &state(&root, PlayMode::AllGroups, RepeatMode::RepeatGroup),
+                b3
+            ),
+            Some(b0)
+        );
     }
 
     #[test]
@@ -342,14 +416,23 @@ mod tests {
         let mut root = playlist();
         root.walk_mut(&mut |g| g.tracks.iter_mut().for_each(|t| t.missing = true));
         let mut e = Engine::new(Some(0));
-        assert_eq!(e.next(&state(&root, PlayMode::AllGroups, RepeatMode::RepeatAll), None), None);
+        assert_eq!(
+            e.next(
+                &state(&root, PlayMode::AllGroups, RepeatMode::RepeatAll),
+                None
+            ),
+            None
+        );
 
         let mut root = playlist();
         root.tracks[1].broken = true;
         let r0 = root.tracks[0].uid;
         let a0 = root.subgroups[0].tracks[0].uid;
         let mut e = Engine::new(Some(0));
-        assert_eq!(e.successor(&state(&root, PlayMode::AllGroups, RepeatMode::Off), r0), Some(a0));
+        assert_eq!(
+            e.successor(&state(&root, PlayMode::AllGroups, RepeatMode::Off), r0),
+            Some(a0)
+        );
     }
 
     #[test]
@@ -369,7 +452,15 @@ mod tests {
         let mut e = Engine::new(Some(5));
         let mut played = Vec::new();
         let mut version = 0;
-        let mut cur = e.next(&PlayState { root: &root, mode: PlayMode::AllTracksShuffled, repeat: RepeatMode::Off, version }, None);
+        let mut cur = e.next(
+            &PlayState {
+                root: &root,
+                mode: PlayMode::AllTracksShuffled,
+                repeat: RepeatMode::Off,
+                version,
+            },
+            None,
+        );
         while let Some(u) = cur {
             e.started(u);
             played.push(u);
@@ -378,7 +469,12 @@ mod tests {
                 root.tracks.push(Track::new("new"));
                 version += 1;
             }
-            let st = PlayState { root: &root, mode: PlayMode::AllTracksShuffled, repeat: RepeatMode::Off, version };
+            let st = PlayState {
+                root: &root,
+                mode: PlayMode::AllTracksShuffled,
+                repeat: RepeatMode::Off,
+                version,
+            };
             cur = e.successor(&st, u);
         }
         assert_eq!(played.len(), 12);

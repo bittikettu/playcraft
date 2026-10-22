@@ -135,7 +135,13 @@ pub struct Track {
 
 impl Track {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Track { uid: next_uid(), path: path.into(), metadata: None, missing: false, broken: false }
+        Track {
+            uid: next_uid(),
+            path: path.into(),
+            metadata: None,
+            missing: false,
+            broken: false,
+        }
     }
 
     pub fn is_playable(&self) -> bool {
@@ -162,7 +168,10 @@ impl Track {
     }
 
     pub fn duration(&self) -> Option<Duration> {
-        self.metadata.as_ref().map(|m| m.duration).filter(|d| !d.is_zero())
+        self.metadata
+            .as_ref()
+            .map(|m| m.duration)
+            .filter(|d| !d.is_zero())
     }
 }
 
@@ -196,12 +205,21 @@ pub struct Group {
 
 impl Group {
     pub fn new(id: usize, name: impl Into<String>) -> Self {
-        Group { id, name: name.into(), ..Default::default() }
+        Group {
+            id,
+            name: name.into(),
+            ..Default::default()
+        }
     }
 
     /// Number of tracks in this group and all its subgroups.
     pub fn total_tracks(&self) -> usize {
-        self.tracks.len() + self.subgroups.iter().map(Group::total_tracks).sum::<usize>()
+        self.tracks.len()
+            + self
+                .subgroups
+                .iter()
+                .map(Group::total_tracks)
+                .sum::<usize>()
     }
 
     /// Calls `f` for this group and every descendant, depth-first, pre-order.
@@ -269,7 +287,9 @@ impl Group {
 
     /// Finds a track by file path, preferring the first match in playlist order.
     pub fn find_path(&self, path: &std::path::Path) -> Option<TrackRef> {
-        self.track_refs().into_iter().find(|r| self.track(r).is_some_and(|t| t.path == path))
+        self.track_refs()
+            .into_iter()
+            .find(|r| self.track(r).is_some_and(|t| t.path == path))
     }
 
     /// Where the track with `uid` currently is.
@@ -329,7 +349,10 @@ mod tests {
         assert_eq!(next, 4);
         let mut ids = Vec::new();
         root.walk(&mut |g| ids.push((g.name.clone(), g.id)));
-        assert_eq!(ids, vec![("Root".into(), 1), ("Rock".into(), 2), ("Prog".into(), 3)]);
+        assert_eq!(
+            ids,
+            vec![("Root".into(), 1), ("Rock".into(), 2), ("Prog".into(), 3)]
+        );
         assert_eq!(root.max_id(), 3);
     }
 
@@ -337,12 +360,18 @@ mod tests {
     fn addresses_tracks_by_path() {
         let root = tree();
         let refs = root.track_refs();
-        let names: Vec<_> = refs.iter().map(|r| root.track(r).unwrap().file_name()).collect();
+        let names: Vec<_> = refs
+            .iter()
+            .map(|r| root.track(r).unwrap().file_name())
+            .collect();
         assert_eq!(names, vec!["a.mp3", "b.mp3", "c.mp3", "d.mp3"]);
         assert_eq!(refs[3], TrackRef::new(vec![0, 0], 0));
         assert_eq!(root.group_at(&[0, 0]).unwrap().name, "Prog");
         assert!(root.group_at(&[1]).is_none());
-        assert_eq!(root.find_path(std::path::Path::new("c.mp3")), Some(TrackRef::new(vec![0], 1)));
+        assert_eq!(
+            root.find_path(std::path::Path::new("c.mp3")),
+            Some(TrackRef::new(vec![0], 1))
+        );
     }
 
     #[test]
