@@ -12,6 +12,7 @@ use crossbeam_channel::Receiver;
 use crate::audio::{AudioCommand, AudioHandle, StreamInfo};
 use crate::config::{Config, ReplayGainMode};
 use crate::library::scanner::MetadataScanner;
+use crate::matrix::MatrixRain;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
 use crate::playlist::engine::Engine;
 use crate::spectrum::SpectrumAnalyzer;
@@ -44,6 +45,30 @@ pub enum View {
     FileManager,
     /// Fullscreen spectrum analyser.
     Visualizer,
+}
+
+/// How the spectrum is drawn in the wide strip and the fullscreen view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visualizer {
+    Bars,
+    /// Matrix-style digital rain of the playing file's bytes, driven by the spectrum.
+    Matrix,
+}
+
+impl Visualizer {
+    pub fn toggle(self) -> Self {
+        match self {
+            Visualizer::Bars => Visualizer::Matrix,
+            Visualizer::Matrix => Visualizer::Bars,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Visualizer::Bars => "spectrum bars",
+            Visualizer::Matrix => "Matrix rain of the file's bytes",
+        }
+    }
 }
 
 /// Where the spectrum analyser is shown outside the fullscreen view.
@@ -149,6 +174,9 @@ pub struct App {
     /// Live search filter for the playlist view.
     pub filter: Option<String>,
     pub spectrum_layout: SpectrumLayout,
+    pub visualizer: Visualizer,
+    /// Digital rain made of the playing file's bytes (the Matrix visualizer).
+    pub rain: MatrixRain,
     /// View to return to when the fullscreen visualizer closes.
     pub(crate) view_before_visualizer: View,
     pub spectrum: SpectrumAnalyzer,
@@ -192,6 +220,8 @@ impl App {
             config_path: crate::paths::config_file(),
             filter: None,
             spectrum_layout: SpectrumLayout::Wide,
+            visualizer: Visualizer::Bars,
+            rain: MatrixRain::default(),
             view_before_visualizer: View::Playlist,
             spectrum: SpectrumAnalyzer::new(),
             last_spectrum_update: Instant::now(),
@@ -221,7 +251,7 @@ impl App {
     /// Whether the screen changes on its own (progress bar, spectrum).
     pub fn is_animating(&self) -> bool {
         self.status() == PlaybackStatus::Playing
-            || (self.spectrum_visible() && self.spectrum.is_active())
+            || (self.spectrum_visible() && (self.spectrum.is_active() || self.rain.is_active()))
     }
 
     pub fn current_group(&self) -> &Group {
@@ -267,6 +297,11 @@ impl App {
             (false, _) => SpectrumLayout::Off,
             (true, "pane") => SpectrumLayout::Pane,
             _ => SpectrumLayout::Wide,
+        };
+        self.visualizer = if config.ui.visualizer == "matrix" {
+            Visualizer::Matrix
+        } else {
+            Visualizer::Bars
         };
         self.replaygain = config.general.replaygain;
         self.audio
@@ -333,6 +368,18 @@ impl App {
         self.last_spectrum_update = Instant::now();
         if self.spectrum_visible() {
             self.spectrum.update(dt);
+            if self.visualizer == Visualizer::Matrix {
+                let shared = self.audio.shared();
+                let duration = shared.duration().as_secs_f64();
+                let fraction = if duration > 0.0 {
+                    shared.position().as_secs_f64() / duration
+                } else {
+                    0.0
+                };
+                let path = self.now.as_ref().map(|n| n.path.as_path());
+                self.rain.feed.set_source(path, fraction);
+                self.rain.update(dt.as_secs_f32(), self.spectrum.bands());
+            }
         }
     }
 
@@ -513,6 +560,13 @@ impl App {
             Action::ShowLog => self.overlay = Overlay::Log { scroll: 0 },
             Action::ThemeSelector => self.open_theme_selector(),
             Action::SpectrumFullscreen => self.toggle_visualizer(),
+            Action::VisualizerStyle => {
+                self.visualizer = self.visualizer.toggle();
+                self.banner(
+                    BannerLevel::Info,
+                    format!("Visualizer: {}", self.visualizer.label()),
+                );
+            }
             Action::SpectrumLayout => {
                 self.spectrum_layout = self.spectrum_layout.cycle();
                 self.banner(

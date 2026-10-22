@@ -18,6 +18,8 @@ fps = 60
 show_spectrum = true
 # wide (full-width strip under the playlist) or pane (inside Now Playing); f = fullscreen
 spectrum_layout = "wide"
+# bars, or matrix: digital rain made of the playing file's own bytes (v toggles)
+visualizer = "bars"
 # dracula, tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome (or press t in the player)
 color_theme = "dracula"
 # unicode or ascii (use ascii in the legacy console with raster fonts)
@@ -60,6 +62,7 @@ show_hidden = false
 # theme_selector = ["t"]
 # spectrum_fullscreen = ["f"]
 # spectrum_layout = ["w"]
+# visualizer_style = ["v"]
 # close = ["Esc"]
 # quit = ["q", "Ctrl+c"]
 

@@ -7,10 +7,67 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
+use ratatui::style::Modifier;
+
 use super::truncate;
+use crate::matrix::Lit;
 use crate::spectrum::{MAX_BANDS, band_position};
-use crate::ui::app::App;
+use crate::ui::app::{App, Visualizer};
 use crate::ui::keymap::{Action, Context};
+
+fn human_size(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1 << 30 => format!("{:.1} GB", b as f64 / (1u64 << 30) as f64),
+        b if b >= 1 << 20 => format!("{:.1} MB", b as f64 / (1u64 << 20) as f64),
+        b if b >= 1 << 10 => format!("{:.0} KB", b as f64 / 1024.0),
+        b => format!("{b} B"),
+    }
+}
+
+/// The Matrix rain: falling hex digits of the playing file over a faint spectrum made of
+/// the same digits.
+fn matrix_lines(app: &App) -> Vec<Line<'static>> {
+    let (width, height) = app.rain.size();
+    let bands = app.spectrum.bands();
+    let theme = &app.theme;
+    let head = theme.base.add_modifier(Modifier::BOLD);
+    let near = theme.info.add_modifier(Modifier::BOLD);
+    let faint = |s: Style| s.add_modifier(Modifier::DIM);
+    (0..height)
+        .map(|y| {
+            let from_bottom = height - 1 - y;
+            let bar_style = faint(row_style(app, from_bottom, height));
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            let mut run = String::new();
+            let mut run_style = theme.base;
+            for x in 0..width {
+                let level = if bands.is_empty() {
+                    0.0
+                } else {
+                    bands[x * bands.len() / width]
+                };
+                let in_bar = (from_bottom as f32) < (level * height as f32).round();
+                let (ch, style) = match app.rain.lit(x, y) {
+                    Some(Lit::Head) => (app.rain.glyph(x, y), head),
+                    Some(Lit::Trail(t)) if t < 0.3 => (app.rain.glyph(x, y), near),
+                    Some(Lit::Trail(t)) if t < 0.7 => (app.rain.glyph(x, y), theme.info),
+                    Some(Lit::Trail(_)) => (app.rain.glyph(x, y), theme.dim),
+                    None if in_bar => (app.rain.glyph(x, y), bar_style),
+                    None => (' ', theme.base),
+                };
+                if style != run_style && !run.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut run), run_style));
+                }
+                run_style = style;
+                run.push(ch);
+            }
+            if !run.is_empty() {
+                spans.push(Span::styled(run, run_style));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
 
 /// Bands shown inside the Now Playing pane.
 pub const PANE_BANDS: usize = 16;
@@ -163,6 +220,11 @@ fn draw_bars(f: &mut Frame<'_>, app: &mut App, inner: Rect) {
     }
     let geo = Geometry::wide(width);
     app.spectrum.set_band_count(geo.bands);
+    if app.visualizer == Visualizer::Matrix {
+        app.rain.resize(width, height);
+        f.render_widget(Paragraph::new(matrix_lines(app)), inner);
+        return;
+    }
     let with_axis = height >= 4;
     let rows = if with_axis { height - 1 } else { height };
     let mut lines = bar_lines(app, geo, rows, rows >= 3);
@@ -203,11 +265,17 @@ pub fn draw_fullscreen(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             None => format!(" {title} "),
         }
     });
-    let back = format!(
-        " {}/Esc: back ",
-        app.keymap
-            .hint(Context::Playlist, Action::SpectrumFullscreen)
-    );
+    let key = app
+        .keymap
+        .hint(Context::Playlist, Action::SpectrumFullscreen);
+    // In Matrix mode, show where in the file the falling bytes come from.
+    let back = match (app.visualizer, app.rain.feed.offset()) {
+        (Visualizer::Matrix, Some(offset)) => format!(
+            " bytes 0x{offset:08X} of {} · {key}/Esc: back ",
+            human_size(app.rain.feed.file_len())
+        ),
+        _ => format!(" {key}/Esc: back "),
+    };
     let title_room = (area.width as usize).saturating_sub(back.len() + 4);
     let title = truncate(
         now.as_deref().unwrap_or(" Nothing playing "),

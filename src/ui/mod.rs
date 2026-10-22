@@ -589,6 +589,63 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn matrix_rain_shows_the_files_bytes() {
+        let path = fixture("tagged.mp3");
+        let mut app = test_app(sample_root());
+        app.now = Some(app::NowPlaying {
+            track: None,
+            path: path.clone(),
+            info: crate::audio::StreamInfo {
+                codec: "mp3".into(),
+                sample_rate: 44_100,
+                channels: 2,
+            },
+            duration: Some(Duration::from_secs(2)),
+        });
+        type_keys(&mut app, &["v"]);
+        assert_eq!(app.visualizer, app::Visualizer::Matrix);
+        assert!(
+            app.banner
+                .as_ref()
+                .is_some_and(|b| b.text.contains("Matrix"))
+        );
+        type_keys(&mut app, &["f"]);
+        app.rain.feed.set_source(Some(&path), 0.0);
+        render(&mut app, 100, 30); // sizes the rain to the screen
+        for _ in 0..90 {
+            feed_tone(&mut app, 1000.0);
+            let bands = app.spectrum.bands().to_vec();
+            app.rain.update(1.0 / 60.0, &bands);
+        }
+        let screen = render(&mut app, 100, 30);
+        println!("{screen}");
+        assert!(
+            screen.contains("bytes 0x"),
+            "byte offset missing from the title"
+        );
+        // Inside the visualizer box every visible character is a hex digit.
+        let inner: String = screen
+            .lines()
+            .skip(1)
+            .take(22)
+            .flat_map(|l| l.chars().skip(1).take(98))
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(inner.len() > 50, "rain too sparse: {inner}");
+        assert!(inner.chars().all(|c| c.is_ascii_hexdigit()), "{inner}");
+        assert!(app.rain.is_active());
+        // The first bytes of this file are its ID3 tag.
+        let first = std::fs::read(&path).unwrap()[0];
+        assert_eq!(
+            app.rain.glyph(0, 0),
+            format!("{first:02X}").chars().next().unwrap()
+        );
+
+        type_keys(&mut app, &["v"]);
+        assert_eq!(app.visualizer, app::Visualizer::Bars);
+    }
+
+    #[test]
     fn spectrum_layout_cycles_wide_pane_off() {
         let mut app = test_app(sample_root());
         assert_eq!(app.spectrum_layout, app::SpectrumLayout::Wide);

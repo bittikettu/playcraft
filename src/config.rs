@@ -57,6 +57,8 @@ pub struct Ui {
     pub show_spectrum: bool,
     /// `wide`: a full-width strip under the playlist; `pane`: inside Now Playing.
     pub spectrum_layout: String,
+    /// `bars` or `matrix` (digital rain made of the playing file's bytes).
+    pub visualizer: String,
     pub color_theme: String,
     pub charset: String,
     pub show_hidden: bool,
@@ -68,6 +70,7 @@ impl Default for Ui {
             fps: 60,
             show_spectrum: true,
             spectrum_layout: "wide".into(),
+            visualizer: "bars".into(),
             color_theme: DEFAULT_THEME.into(),
             charset: "unicode".into(),
             show_hidden: false,
@@ -174,6 +177,13 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             theme_names().join(", ")
         ));
         ui.color_theme = Ui::default().color_theme;
+    }
+    if !["bars", "matrix"].contains(&ui.visualizer.as_str()) {
+        warnings.push(format!(
+            "config: visualizer must be \"bars\" or \"matrix\", not \"{}\"",
+            ui.visualizer
+        ));
+        ui.visualizer = Ui::default().visualizer;
     }
     if !["wide", "pane"].contains(&ui.spectrum_layout.as_str()) {
         warnings.push(format!(
@@ -341,6 +351,8 @@ pub fn default_file_text() -> String {
          show_spectrum = true\n\
          # wide (full-width strip under the playlist) or pane (inside Now Playing); f = fullscreen\n\
          spectrum_layout = \"wide\"\n\
+         # bars, or matrix: digital rain made of the playing file's own bytes (v toggles)\n\
+         visualizer = \"bars\"\n\
          # THEME_LIST\n\
          color_theme = \"DEFAULT_THEME\"\n\
          # unicode or ascii (use ascii in the legacy console with raster fonts)\n\

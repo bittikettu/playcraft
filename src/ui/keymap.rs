@@ -54,6 +54,7 @@ pub enum Action {
     ThemeSelector,
     SpectrumFullscreen,
     SpectrumLayout,
+    VisualizerStyle,
     Close,
     #[cfg(debug_assertions)]
     DebugPanic,
@@ -100,6 +101,7 @@ impl Action {
         Action::ThemeSelector,
         Action::SpectrumFullscreen,
         Action::SpectrumLayout,
+        Action::VisualizerStyle,
         Action::Close,
         Action::Quit,
     ];
@@ -147,6 +149,7 @@ impl Action {
             Action::ThemeSelector => "theme_selector",
             Action::SpectrumFullscreen => "spectrum_fullscreen",
             Action::SpectrumLayout => "spectrum_layout",
+            Action::VisualizerStyle => "visualizer_style",
             Action::Close => "close",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "debug_panic",
@@ -201,6 +204,7 @@ impl Action {
             Action::ThemeSelector => "Choose colour theme",
             Action::SpectrumFullscreen => "Fullscreen spectrum analyser",
             Action::SpectrumLayout => "Spectrum: wide / in panel / off",
+            Action::VisualizerStyle => "Visualizer: bars / Matrix rain of the file's bytes",
             Action::Close => "Close view / cancel",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "Crash on purpose (debug builds)",
@@ -392,6 +396,7 @@ impl Default for Keymap {
             (C::Global, ThemeSelector, &["t"]),
             (C::Global, SpectrumFullscreen, &["f"]),
             (C::Global, SpectrumLayout, &["w"]),
+            (C::Global, VisualizerStyle, &["v"]),
             (C::Global, Close, &["Esc"]),
             (C::Global, Quit, &["q", "Ctrl+c"]),
             (C::Playlist, RenameGroup, &["R"]),

@@ -5,6 +5,7 @@ pub mod config;
 pub mod headless;
 pub mod library;
 pub mod log_ring;
+pub mod matrix;
 pub mod model;
 pub mod paths;
 pub mod platform;
