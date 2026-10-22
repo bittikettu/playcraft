@@ -2,7 +2,6 @@
 name = "mp3blaster-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.87"
 description = "A memory-safe reimplementation of the classic MP3Blaster terminal audio player"
 license = "MIT"
 readme = "README.md"

@@ -93,7 +93,17 @@ pub struct Config {
     pub general: General,
     pub audio: Audio,
     pub ui: Ui,
-    pub keybindings: BTreeMap<String, KeyList>,
+    pub keybindings: Keybindings,
+}
+
+/// `[keybindings]` rebinds actions everywhere; `[keybindings.file_manager]` only inside the
+/// file manager (where e.g. Space selects instead of pausing).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Keybindings {
+    pub file_manager: BTreeMap<String, KeyList>,
+    #[serde(flatten)]
+    pub main: BTreeMap<String, KeyList>,
 }
 
 pub const THEMES: &[&str] = &["classic_blue", "gruvbox", "catppuccin", "monochrome"];
@@ -216,22 +226,34 @@ impl Config {
     pub fn keymap(&self) -> (Keymap, Vec<String>) {
         let mut keymap = Keymap::default();
         let mut warnings = Vec::new();
-        for (name, list) in &self.keybindings {
-            let Some(action) = Action::from_config_name(name) else {
-                warnings.push(format!(
-                    "config: unknown action \"{name}\" in [keybindings]"
-                ));
-                continue;
-            };
-            let mut keys = Vec::new();
-            for key in list.keys() {
-                match KeyBinding::parse(key) {
-                    Ok(k) => keys.push(k),
-                    Err(e) => warnings.push(format!("config: {name}: {e}")),
+        let sections = [
+            (&self.keybindings.main, None, "[keybindings]"),
+            (
+                &self.keybindings.file_manager,
+                Some(Context::FileManager),
+                "[keybindings.file_manager]",
+            ),
+        ];
+        for (map, ctx, section) in sections {
+            for (name, list) in map {
+                let Some(action) = Action::from_config_name(name) else {
+                    warnings.push(format!("config: unknown action \"{name}\" in {section}"));
+                    continue;
+                };
+                let mut keys = Vec::new();
+                for key in list.keys() {
+                    match KeyBinding::parse(key) {
+                        Ok(k) => keys.push(k),
+                        Err(e) => warnings.push(format!("config: {name}: {e}")),
+                    }
                 }
-            }
-            if !keys.is_empty() {
-                keymap.rebind(action, &keys);
+                if keys.is_empty() {
+                    continue;
+                }
+                match ctx {
+                    Some(ctx) => keymap.rebind_in(ctx, action, &keys),
+                    None => keymap.rebind(action, &keys),
+                }
             }
         }
         (keymap, warnings)
@@ -288,21 +310,33 @@ pub fn default_file_text() -> String {
          # Ins, Left/Right/Up/Down, PgUp/PgDn, Home/End, F1-F24, with Ctrl+/Alt+/Shift+ prefixes.\n",
     );
     let defaults = Keymap::default();
-    for &action in Action::ALL {
-        let mut keys: Vec<String> = Vec::new();
-        for ctx in [Context::Global, Context::Playlist, Context::FileManager] {
-            for k in defaults.keys_for(ctx, action) {
-                let s = k.to_string();
-                if !keys.contains(&s) {
-                    keys.push(s);
-                }
-            }
-        }
+    let line = |out: &mut String, action: Action, keys: Vec<KeyBinding>| {
         let quoted: Vec<String> = keys
             .iter()
-            .map(|k| format!("\"{}\"", k.replace('\\', "\\\\").replace('"', "\\\"")))
+            .map(|k| {
+                format!(
+                    "\"{}\"",
+                    k.to_string().replace('\\', "\\\\").replace('"', "\\\"")
+                )
+            })
             .collect();
         let _ = writeln!(out, "# {} = [{}]", action.config_name(), quoted.join(", "));
+    };
+    for &action in Action::ALL {
+        let home = defaults.home_context(action);
+        if home != Context::FileManager {
+            line(&mut out, action, defaults.keys_exact(home, action));
+        }
+    }
+    out.push_str(
+        "\n[keybindings.file_manager]\n\
+         # Keys that apply only inside the file manager (they take precedence there).\n",
+    );
+    for &action in Action::ALL {
+        let keys = defaults.keys_exact(Context::FileManager, action);
+        if !keys.is_empty() {
+            line(&mut out, action, keys);
+        }
     }
     out
 }
@@ -398,15 +432,53 @@ seek_backward = ["Left", "1"]
             text.contains("# play_pause = [\"Space\", \"c\", \"5\"]"),
             "{text}"
         );
-        // Every commented binding line is valid when uncommented.
+        // Uncommenting every binding line must leave the keymap exactly as it was.
         let uncommented: String = text
             .lines()
-            .filter_map(|l| l.strip_prefix("# ").filter(|l| l.contains(" = [")))
+            .map(|l| match l.strip_prefix("# ") {
+                Some(rest) if rest.contains(" = [") => rest,
+                _ => l,
+            })
             .map(|l| format!("{l}\n"))
             .collect();
-        let (config, warnings) = parse(&format!("[keybindings]\n{uncommented}"));
+        let (config, warnings) = parse(&uncommented);
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(config.keymap().1.is_empty());
+        assert!(!config.keybindings.main.is_empty());
+        assert!(!config.keybindings.file_manager.is_empty());
+        let (keymap, warnings) = config.keymap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(keymap.all_bindings(), Keymap::default().all_bindings());
+    }
+
+    #[test]
+    fn file_manager_section_only_affects_the_file_manager() {
+        let (config, warnings) = parse(
+            "[keybindings]\nactivate = [\"Enter\", \"o\"]\n[keybindings.file_manager]\nselect = \"x\"\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let (keymap, _) = config.keymap();
+        let o = KeyBinding::plain('o');
+        let x = KeyBinding::plain('x');
+        assert_eq!(keymap.lookup(Context::Playlist, &o), Some(Action::Activate));
+        // The file manager keeps its own activate keys and gets the new select key.
+        assert_eq!(
+            keymap.lookup(Context::FileManager, &KeyBinding::plain('l')),
+            Some(Action::Activate)
+        );
+        assert_eq!(
+            keymap.lookup(Context::FileManager, &x),
+            Some(Action::Select)
+        );
+        assert_eq!(keymap.lookup(Context::Playlist, &x), None);
+        assert_eq!(
+            keymap.lookup(Context::FileManager, &KeyBinding::plain(' ')),
+            Some(Action::PlayPause)
+        );
+        // Next-track on "l" is untouched outside the file manager.
+        assert_eq!(
+            keymap.lookup(Context::Playlist, &KeyBinding::plain('l')),
+            Some(Action::NextTrack)
+        );
     }
 
     #[test]

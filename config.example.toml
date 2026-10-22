@@ -1,0 +1,70 @@
+# mp3blaster-rs configuration. Every setting is optional.
+
+[general]
+# Where the file manager starts; empty uses your Music folder.
+default_music_dir = ""
+resume_on_startup = true
+gapless_playback = true
+audio_buffer_ms = 150
+# off, track or album
+replaygain = "off"
+
+[audio]
+# Part of an output device name (see --list-devices); empty follows the Windows default.
+output_device = ""
+
+[ui]
+fps = 60
+show_spectrum = true
+# classic_blue, gruvbox, catppuccin, monochrome
+color_theme = "classic_blue"
+# unicode or ascii (use ascii in the legacy console with raster fonts)
+charset = "unicode"
+show_hidden = false
+
+[keybindings]
+# Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,
+# Ins, Left/Right/Up/Down, PgUp/PgDn, Home/End, F1-F24, with Ctrl+/Alt+/Shift+ prefixes.
+# play_pause = ["Space", "c", "5"]
+# stop = ["s", "2"]
+# next_track = ["n", "l", "6"]
+# prev_track = ["b", "h", "4"]
+# seek_forward = ["Right", "3"]
+# seek_backward = ["Left", "1"]
+# volume_up = ["+", "=", ">"]
+# volume_down = ["-", "<"]
+# cycle_play_mode = ["m"]
+# cycle_repeat = ["r"]
+# toggle_group_shuffle = ["z"]
+# cursor_up = ["Up", "k"]
+# cursor_down = ["Down", "j"]
+# page_up = ["PgUp", "Ctrl+u"]
+# page_down = ["PgDn", "Ctrl+d"]
+# home = ["Home"]
+# end = ["End"]
+# activate = ["Enter"]
+# back = ["Backspace"]
+# open_file_manager = ["F1", "a"]
+# new_group = ["F2", "g"]
+# rename_group = ["R"]
+# delete = ["d", "Del"]
+# move_up = ["K"]
+# move_down = ["J"]
+# load_playlist = ["F3"]
+# save_playlist = ["F4"]
+# search = ["/"]
+# help = ["?"]
+# show_log = ["L"]
+# close = ["Esc"]
+# quit = ["q", "Ctrl+c"]
+
+[keybindings.file_manager]
+# Keys that apply only inside the file manager (they take precedence there).
+# activate = ["Enter", "l", "Right"]
+# back = ["Backspace", "h", "Left"]
+# select = ["Space", "v"]
+# invert_selection = ["V"]
+# select_glob = ["*"]
+# add_selected = ["a", "Ins"]
+# toggle_hidden = ["."]
+# close = ["Esc", "F1"]

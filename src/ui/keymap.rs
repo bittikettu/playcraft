@@ -118,7 +118,8 @@ impl Action {
             Action::End => "end",
             Action::Activate => "activate",
             Action::Back => "back",
-            Action::FileManager => "file_manager",
+            // Not "file_manager": that name is the `[keybindings.file_manager]` table.
+            Action::FileManager => "open_file_manager",
             Action::NewGroup => "new_group",
             Action::LoadPlaylist => "load_playlist",
             Action::SavePlaylist => "save_playlist",
@@ -415,14 +416,64 @@ impl Keymap {
             .insert(key, (action, self.next_order));
     }
 
-    /// Replaces every binding of `action` (in all contexts) with `keys` in the global context.
-    pub fn rebind(&mut self, action: Action, keys: &[KeyBinding]) {
-        for map in self.bindings.values_mut() {
+    fn has_binding(&self, ctx: Context, action: Action) -> bool {
+        self.bindings
+            .get(&ctx)
+            .is_some_and(|m| m.values().any(|(a, _)| *a == action))
+    }
+
+    /// The context an action's main bindings live in: global, unless the defaults only bind
+    /// it in the playlist or the file manager.
+    pub fn home_context(&self, action: Action) -> Context {
+        if self.has_binding(Context::Global, action) {
+            Context::Global
+        } else if self.has_binding(Context::FileManager, action)
+            && !self.has_binding(Context::Playlist, action)
+        {
+            Context::FileManager
+        } else if self.has_binding(Context::Playlist, action) {
+            Context::Playlist
+        } else {
+            Context::Global
+        }
+    }
+
+    /// Replaces the bindings of `action` in `ctx` with `keys`.
+    pub fn rebind_in(&mut self, ctx: Context, action: Action, keys: &[KeyBinding]) {
+        if let Some(map) = self.bindings.get_mut(&ctx) {
             map.retain(|_, (a, _)| *a != action);
         }
         for key in keys {
-            self.bind(Context::Global, *key, action);
+            self.bind(ctx, *key, action);
         }
+    }
+
+    /// Replaces the main (non file-manager) bindings of `action` with `keys` in its home
+    /// context. File-manager-only actions are rebound in the file manager.
+    pub fn rebind(&mut self, action: Action, keys: &[KeyBinding]) {
+        let home = self.home_context(action);
+        if home != Context::FileManager {
+            for ctx in [Context::Global, Context::Playlist] {
+                if let Some(map) = self.bindings.get_mut(&ctx) {
+                    map.retain(|_, (a, _)| *a != action);
+                }
+            }
+        }
+        self.rebind_in(home, action, keys);
+    }
+
+    /// Every binding, sorted, for comparisons and diagnostics.
+    pub fn all_bindings(&self) -> Vec<(String, String, Action)> {
+        let mut out: Vec<_> = self
+            .bindings
+            .iter()
+            .flat_map(|(ctx, m)| {
+                m.iter()
+                    .map(move |(k, (a, _))| (format!("{ctx:?}"), k.to_string(), *a))
+            })
+            .collect();
+        out.sort();
+        out
     }
 
     pub fn lookup(&self, ctx: Context, key: &KeyBinding) -> Option<Action> {
@@ -435,26 +486,28 @@ impl Keymap {
 
     /// Keys bound to `action` in `ctx` (falling back to global), for help and hint texts.
     pub fn keys_for(&self, ctx: Context, action: Action) -> Vec<KeyBinding> {
-        let collect = |c: Context| -> Vec<KeyBinding> {
-            let mut keys: Vec<(usize, KeyBinding)> = self
-                .bindings
-                .get(&c)
-                .map(|m| {
-                    m.iter()
-                        .filter(|(_, (a, _))| *a == action)
-                        .map(|(k, (_, o))| (*o, *k))
-                        .collect()
-                })
-                .unwrap_or_default();
-            keys.sort_by_key(|(order, _)| *order);
-            keys.into_iter().map(|(_, k)| k).collect()
-        };
-        let keys = collect(ctx);
+        let keys = self.keys_exact(ctx, action);
         if keys.is_empty() && ctx != Context::Global {
-            collect(Context::Global)
+            self.keys_exact(Context::Global, action)
         } else {
             keys
         }
+    }
+
+    /// Keys bound to `action` in exactly `ctx`, in preference order.
+    pub fn keys_exact(&self, ctx: Context, action: Action) -> Vec<KeyBinding> {
+        let mut keys: Vec<(usize, KeyBinding)> = self
+            .bindings
+            .get(&ctx)
+            .map(|m| {
+                m.iter()
+                    .filter(|(_, (a, _))| *a == action)
+                    .map(|(k, (_, o))| (*o, *k))
+                    .collect()
+            })
+            .unwrap_or_default();
+        keys.sort_by_key(|(order, _)| *order);
+        keys.into_iter().map(|(_, k)| k).collect()
     }
 
     /// The first key for `action`, formatted, or "?" if unbound.
