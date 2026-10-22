@@ -32,7 +32,11 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
   - select by glob (`*.flac`) or regex (`re:^0[1-5]`);
   - recursive folder adds that run in the background (10,000+ files without freezing the UI).
 - **Playlists:** `.m3u`, `.m3u8` (nested groups via `#EXTGRP:A / B`), `.pls`, and the native `.blst`, which stores the full group tree.
-- **Spectrum analyser** (16 bands), **ReplayGain** (track or album, limited to avoid clipping), and logarithmic, click-free volume.
+- **Spectrum analyser:**
+  - by default a full-width strip under the playlist, with more bands the wider the terminal;
+  - colour gradient, falling peak markers and a frequency axis;
+  - `f` switches to a fullscreen visualiser; `w` cycles between the wide strip, inside Now Playing, and off.
+- **ReplayGain** (track or album, limited to avoid clipping) and logarithmic, click-free volume.
 - **Audio device handling:** device unplugged → playback pauses with a banner and resumes when the device returns. Windows default device changes → playback follows.
 - **Sessions:** the playlist, track, position, volume and modes are restored on the next start. They are saved every 30 s, on quit, and when the console window is closed.
 - **Themes:** Dracula (the default), Tokyo Night, One Dark, Monokai, Nord, Catppuccin, Gruvbox, the original Classic Blue, and Monochrome. Press `t` to open the picker, which previews each theme live and saves your choice to `config.toml`.
@@ -86,6 +90,7 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 | Volume down / up | `<` / `>` | `-` / `+` (also `=`) |
 | Help / message log | `?` / `L` | |
 | Colour theme picker | | `t` |
+| Fullscreen spectrum / spectrum layout | | `f` / `w` |
 | Quit | `q` | Ctrl+c |
 
 **Playlist view:**
@@ -126,6 +131,7 @@ output_device = "Arctis"    # part of a device name; empty follows the Windows d
 [ui]
 color_theme = "dracula"     # or tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome
 charset = "ascii"           # for the legacy console with raster fonts
+spectrum_layout = "wide"    # wide (full-width strip) or pane (inside Now Playing)
 
 [keybindings]
 play_pause = ["Space", "c"]
@@ -154,13 +160,13 @@ next_track = ["n", "6"]
   - `AudioCommand` gains `QueueNext` (for gapless playback) and `SetReplayGain`.
   - One-off events (track started or failed, device lost or restored) travel as an `AudioEvent` enum.
   - The `AudioTelemetry` snapshot is assembled per frame from lock-free shared state.
-- **Spectrum FFT:** it runs on the UI thread from a tap buffer instead of inside the real-time audio callback, so the callback never does heavy work.
+- **Spectrum FFT:** it runs on the UI thread from a tap buffer instead of inside the real-time audio callback, so the callback never does heavy work. The display has as many bands as the width allows; `AudioTelemetry.spectrum_bins` still holds the spec's 16 bands.
 - **Resampling:** `rubato` resamples to the device rate. The spec's crate list has no resampler, but WASAPI shared mode needs one.
 - **Groups:** groups gain a `shuffle` flag, and the original MP3Blaster play modes are added.
 - **Themes:** the default is Dracula instead of `classic_blue`. The spec's four themes are kept, five VS Code themes are added, and there is an in-app picker (`t`).
 - **Additions:**
-  - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `m`, `r`, `z`, `R`, `d`, `K`/`J`;
-  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`;
+  - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `m`, `r`, `z`, `R`, `d`, `K`/`J`;
+  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`;
   - the `[keybindings.file_manager]` section.
 - **Key conflict:** the spec's UI mockup shows F1 as Help, but its key table says F1 opens the file manager. The key table wins, so Help is `?`.
 

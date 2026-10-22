@@ -42,6 +42,36 @@ pub struct Banner {
 pub enum View {
     Playlist,
     FileManager,
+    /// Fullscreen spectrum analyser.
+    Visualizer,
+}
+
+/// Where the spectrum analyser is shown outside the fullscreen view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectrumLayout {
+    /// A full-width strip under the playlist and Now Playing panes.
+    Wide,
+    /// Inside the Now Playing pane.
+    Pane,
+    Off,
+}
+
+impl SpectrumLayout {
+    pub fn cycle(self) -> Self {
+        match self {
+            SpectrumLayout::Wide => SpectrumLayout::Pane,
+            SpectrumLayout::Pane => SpectrumLayout::Off,
+            SpectrumLayout::Off => SpectrumLayout::Wide,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SpectrumLayout::Wide => "wide",
+            SpectrumLayout::Pane => "in Now Playing",
+            SpectrumLayout::Off => "off",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +148,9 @@ pub struct App {
     pub config_path: Option<PathBuf>,
     /// Live search filter for the playlist view.
     pub filter: Option<String>,
-    pub show_spectrum: bool,
+    pub spectrum_layout: SpectrumLayout,
+    /// View to return to when the fullscreen visualizer closes.
+    pub(crate) view_before_visualizer: View,
     pub spectrum: SpectrumAnalyzer,
     last_spectrum_update: Instant,
     pub replaygain: ReplayGainMode,
@@ -159,7 +191,8 @@ impl App {
             playlist_path: None,
             config_path: crate::paths::config_file(),
             filter: None,
-            show_spectrum: true,
+            spectrum_layout: SpectrumLayout::Wide,
+            view_before_visualizer: View::Playlist,
             spectrum: SpectrumAnalyzer::new(),
             last_spectrum_update: Instant::now(),
             replaygain: ReplayGainMode::Off,
@@ -188,7 +221,7 @@ impl App {
     /// Whether the screen changes on its own (progress bar, spectrum).
     pub fn is_animating(&self) -> bool {
         self.status() == PlaybackStatus::Playing
-            || (self.show_spectrum && self.spectrum.is_active())
+            || (self.spectrum_visible() && self.spectrum.is_active())
     }
 
     pub fn current_group(&self) -> &Group {
@@ -230,7 +263,11 @@ impl App {
         warnings.extend(warning);
         self.symbols = Symbols::by_name(&config.ui.charset);
         self.fps = config.ui.fps;
-        self.show_spectrum = config.ui.show_spectrum;
+        self.spectrum_layout = match (config.ui.show_spectrum, config.ui.spectrum_layout.as_str()) {
+            (false, _) => SpectrumLayout::Off,
+            (true, "pane") => SpectrumLayout::Pane,
+            _ => SpectrumLayout::Wide,
+        };
         self.replaygain = config.general.replaygain;
         self.audio
             .send(AudioCommand::SetReplayGain(config.general.replaygain));
@@ -294,7 +331,7 @@ impl App {
         }
         let dt = self.last_spectrum_update.elapsed();
         self.last_spectrum_update = Instant::now();
-        if self.show_spectrum {
+        if self.spectrum_visible() {
             self.spectrum.update(dt);
         }
     }
@@ -302,7 +339,7 @@ impl App {
     /// Playback state for this frame, including the spectrum (spec §4 `AudioTelemetry`).
     pub fn telemetry(&self) -> crate::audio::AudioTelemetry {
         let mut t = crate::audio::AudioTelemetry::from_shared(self.audio.shared());
-        t.spectrum_bins = self.spectrum.bands();
+        t.spectrum_bins = self.spectrum.bins16();
         if let Some(meta) = self
             .playing
             .and_then(|u| self.root.track_by_uid(u))
@@ -323,6 +360,21 @@ impl App {
         match self.view {
             View::Playlist => Context::Playlist,
             View::FileManager => Context::FileManager,
+            View::Visualizer => Context::Playlist,
+        }
+    }
+
+    /// Whether a spectrum is on screen (so the analyser needs updating).
+    pub fn spectrum_visible(&self) -> bool {
+        self.view == View::Visualizer || self.spectrum_layout != SpectrumLayout::Off
+    }
+
+    fn toggle_visualizer(&mut self) {
+        if self.view == View::Visualizer {
+            self.view = self.view_before_visualizer;
+        } else {
+            self.view_before_visualizer = self.view;
+            self.view = View::Visualizer;
         }
     }
 
@@ -400,6 +452,12 @@ impl App {
         if self.view == View::FileManager && self.on_file_manager_action(action) {
             return;
         }
+        if self.view == View::Visualizer
+            && matches!(action, Action::Close | Action::Back | Action::Activate)
+        {
+            self.toggle_visualizer();
+            return;
+        }
         let rows = self.rows().len();
         let page = self.list_height.max(1);
         match action {
@@ -454,6 +512,14 @@ impl App {
             Action::Help => self.overlay = Overlay::Help { scroll: 0 },
             Action::ShowLog => self.overlay = Overlay::Log { scroll: 0 },
             Action::ThemeSelector => self.open_theme_selector(),
+            Action::SpectrumFullscreen => self.toggle_visualizer(),
+            Action::SpectrumLayout => {
+                self.spectrum_layout = self.spectrum_layout.cycle();
+                self.banner(
+                    BannerLevel::Info,
+                    format!("Spectrum: {}", self.spectrum_layout.label()),
+                );
+            }
             Action::Close => {
                 if self.filter.take().is_none() {
                     self.banner = None;

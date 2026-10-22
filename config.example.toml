@@ -16,6 +16,8 @@ output_device = ""
 [ui]
 fps = 60
 show_spectrum = true
+# wide (full-width strip under the playlist) or pane (inside Now Playing); f = fullscreen
+spectrum_layout = "wide"
 # dracula, tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome (or press t in the player)
 color_theme = "dracula"
 # unicode or ascii (use ascii in the legacy console with raster fonts)
@@ -56,6 +58,8 @@ show_hidden = false
 # help = ["?"]
 # show_log = ["L"]
 # theme_selector = ["t"]
+# spectrum_fullscreen = ["f"]
+# spectrum_layout = ["w"]
 # close = ["Esc"]
 # quit = ["q", "Ctrl+c"]
 

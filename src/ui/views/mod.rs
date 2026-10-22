@@ -7,6 +7,7 @@ mod log;
 mod now_playing;
 mod playlist;
 mod progress;
+mod spectrum;
 mod status_bar;
 mod themes;
 
@@ -17,11 +18,13 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::Block;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::app::{App, Overlay, View};
+use super::app::{App, Overlay, SpectrumLayout, View};
 
 /// Width of the Now Playing pane; it is hidden on terminals narrower than `SIDE_MIN_WIDTH`.
 const SIDE_WIDTH: u16 = 28;
 const SIDE_MIN_WIDTH: u16 = 80;
+/// Main-area height needed before the spectrum gets its own full-width strip.
+const STRIP_MIN_MAIN: u16 = 18;
 
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
@@ -37,14 +40,36 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     .areas(area);
 
     match app.view {
-        View::Playlist if main.width >= SIDE_MIN_WIDTH => {
-            let [list, side] =
-                Layout::horizontal([Constraint::Fill(1), Constraint::Length(SIDE_WIDTH)])
-                    .areas(main);
-            playlist::draw(f, app, list, true);
-            now_playing::draw(f, app, side);
+        View::Playlist => {
+            // The wide spectrum strip needs room for the panes above it; otherwise the
+            // spectrum moves into Now Playing.
+            let wide = app.spectrum_layout == SpectrumLayout::Wide && main.height >= STRIP_MIN_MAIN;
+            let (panes, strip) = if wide {
+                let height = (main.height / 3).clamp(6, 14);
+                let [panes, strip] =
+                    Layout::vertical([Constraint::Fill(1), Constraint::Length(height)]).areas(main);
+                (panes, Some(strip))
+            } else {
+                (main, None)
+            };
+            let pane_spectrum = !wide && app.spectrum_layout != SpectrumLayout::Off;
+            if panes.width >= SIDE_MIN_WIDTH {
+                let [list, side] =
+                    Layout::horizontal([Constraint::Fill(1), Constraint::Length(SIDE_WIDTH)])
+                        .areas(panes);
+                playlist::draw(f, app, list, true);
+                if pane_spectrum {
+                    app.spectrum.set_band_count(spectrum::PANE_BANDS);
+                }
+                now_playing::draw(f, app, side, pane_spectrum);
+            } else {
+                playlist::draw(f, app, panes, true);
+            }
+            if let Some(strip) = strip {
+                spectrum::draw_strip(f, app, strip);
+            }
         }
-        View::Playlist => playlist::draw(f, app, main, true),
+        View::Visualizer => spectrum::draw_fullscreen(f, app, main),
         View::FileManager if main.width >= 60 => {
             let [files, list] =
                 Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(main);
@@ -62,6 +87,12 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
         Overlay::Themes { cursor, original } => themes::draw(f, app, area, cursor, original),
         Overlay::None => {}
     }
+}
+
+/// Number of bands drawn inside the Now Playing pane (for tests).
+#[cfg(test)]
+pub(crate) fn spectrum_pane_bands() -> usize {
+    spectrum::PANE_BANDS
 }
 
 /// A rectangle of `pct_w` x `pct_h` percent centred in `area`.

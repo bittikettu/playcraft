@@ -3,10 +3,11 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::truncate;
+use super::{spectrum, truncate};
 use crate::ui::app::App;
 
-pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect) {
+/// Draws track info and status; with_spectrum adds small spectrum bars in the free space.
+pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, with_spectrum: bool) {
     let theme = &app.theme;
     let block = Block::bordered()
         .border_set(app.symbols.border)
@@ -113,52 +114,14 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect) {
     let top = lines.len().min(height.saturating_sub(footer.len()));
     lines.truncate(top);
     let mut gap = height.saturating_sub(top + footer.len());
-    if app.show_spectrum && gap >= 2 {
+    if with_spectrum && gap >= 2 {
         let rows = (gap - 1).min(6);
         lines.push(Line::default());
-        lines.extend(spectrum_lines(app, width, rows));
+        let geo = spectrum::Geometry::new(width, spectrum::PANE_BANDS);
+        lines.extend(spectrum::bar_lines(app, geo, rows, false));
         gap -= rows + 1;
     }
     lines.extend(std::iter::repeat_n(Line::default(), gap));
     lines.extend(footer.into_iter().take(height.saturating_sub(top)));
     f.render_widget(Paragraph::new(lines), inner);
-}
-
-/// Vertical bars for the 16 spectrum bands, `rows` high, centred in `width` columns.
-fn spectrum_lines(app: &App, width: usize, rows: usize) -> Vec<Line<'static>> {
-    let bands = app.spectrum.bands();
-    let spaced = width >= bands.len() * 2 - 1;
-    let used = if spaced {
-        bands.len() * 2 - 1
-    } else {
-        bands.len()
-    };
-    let pad = " ".repeat(width.saturating_sub(used) / 2);
-    let levels = app.symbols.levels;
-    (0..rows)
-        .map(|row| {
-            let from_bottom = rows - 1 - row;
-            let mut s = pad.clone();
-            for (i, &level) in bands.iter().enumerate() {
-                let eighths =
-                    (level * (rows * 8) as f32).round() as isize - (from_bottom * 8) as isize;
-                s.push_str(match eighths {
-                    e if e >= 8 => levels[7],
-                    e if e <= 0 => " ",
-                    e => levels[e as usize - 1],
-                });
-                if spaced && i + 1 < bands.len() {
-                    s.push(' ');
-                }
-            }
-            // The top third of tall bars glows in the theme's "hot" colour.
-            let hot = rows >= 3 && row < rows / 3;
-            let style = if hot {
-                app.theme.spectrum_hot
-            } else {
-                app.theme.spectrum
-            };
-            Line::styled(s, style)
-        })
-        .collect()
 }

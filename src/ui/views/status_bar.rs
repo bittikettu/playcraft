@@ -69,6 +69,16 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, compact: bool) {
             (Action::ToggleHidden, "Hidden"),
             (Action::Close, "Close"),
         ],
+        View::Visualizer => &[
+            (Action::SpectrumFullscreen, "Back"),
+            (Action::PlayPause, "Play/Pause"),
+            (Action::NextTrack, "Next"),
+            (Action::PrevTrack, "Prev"),
+            (Action::SeekForward, "Seek"),
+            (Action::VolumeUp, "Vol"),
+            (Action::ThemeSelector, "Theme"),
+            (Action::Quit, "Quit"),
+        ],
     };
     let mut spans = Vec::new();
     let mut used = 0;

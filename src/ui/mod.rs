@@ -512,6 +512,8 @@ pub(crate) mod tests {
             "falling bars keep the display animating"
         );
 
+        // The global logger may not be installed yet when this test runs first.
+        crate::log_ring::init(log::LevelFilter::Debug, None);
         log::warn!("spectrum test warning");
         type_keys(&mut app, &["L"]);
         let screen = render(&mut app, 100, 30);
@@ -519,6 +521,85 @@ pub(crate) mod tests {
         assert!(screen.contains("spectrum test warning"));
         type_keys(&mut app, &["Esc"]);
         assert_eq!(app.overlay, app::Overlay::None);
+    }
+
+    fn feed_tone(app: &mut App, hz: f32) {
+        let tone: Vec<f32> = (0..8192)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * hz * i as f32 / 48_000.0).sin())
+            .collect();
+        app.spectrum.push_samples(&tone);
+        app.spectrum.update(Duration::ZERO);
+    }
+
+    #[test]
+    fn wide_spectrum_strip_spans_the_screen() {
+        let mut app = test_app(sample_root());
+        render(&mut app, 120, 34); // sets the band count for this width
+        feed_tone(&mut app, 1000.0);
+        let screen = render(&mut app, 120, 34);
+        println!("{screen}");
+        assert!(screen.contains("Spectrum"));
+        assert!(screen.contains("f: fullscreen"));
+        assert!(
+            app.spectrum.band_count() >= 36,
+            "{} bands",
+            app.spectrum.band_count()
+        );
+        let axis = screen
+            .lines()
+            .find(|l| l.contains("1k"))
+            .expect("frequency axis");
+        assert!(axis.contains("100") && axis.contains("10k"), "{axis}");
+        // Wide bars: two block characters side by side.
+        assert!(screen.contains("██"));
+
+        // On a short terminal the spectrum falls back into the Now Playing pane.
+        render(&mut app, 100, 20);
+        assert_eq!(app.spectrum.band_count(), views::spectrum_pane_bands());
+    }
+
+    #[test]
+    fn fullscreen_visualizer_toggles_and_keeps_playback_keys() {
+        let mut app = test_app(sample_root());
+        type_keys(&mut app, &["f"]);
+        assert_eq!(app.view, app::View::Visualizer);
+        render(&mut app, 100, 30);
+        feed_tone(&mut app, 300.0);
+        let screen = render(&mut app, 100, 30);
+        println!("{screen}");
+        assert!(screen.contains("Nothing playing"));
+        assert!(screen.contains("f/Esc: back"));
+        assert!(
+            !screen.contains("Playlist: Root"),
+            "playlist must be hidden"
+        );
+        assert!(screen.contains("f:Back"));
+        // Volume works in the visualizer; Esc returns to the playlist.
+        let before = app.audio.shared().volume();
+        type_keys(&mut app, &["+"]);
+        assert!(app.audio.shared().volume() > before);
+        type_keys(&mut app, &["Esc"]);
+        assert_eq!(app.view, app::View::Playlist);
+
+        // From the file manager, f and back again returns to the file manager.
+        type_keys(&mut app, &["F1", "f"]);
+        assert_eq!(app.view, app::View::Visualizer);
+        type_keys(&mut app, &["f"]);
+        assert_eq!(app.view, app::View::FileManager);
+    }
+
+    #[test]
+    fn spectrum_layout_cycles_wide_pane_off() {
+        let mut app = test_app(sample_root());
+        assert_eq!(app.spectrum_layout, app::SpectrumLayout::Wide);
+        type_keys(&mut app, &["w"]);
+        assert_eq!(app.spectrum_layout, app::SpectrumLayout::Pane);
+        assert!(!render(&mut app, 120, 34).contains(" Spectrum "));
+        type_keys(&mut app, &["w"]);
+        assert_eq!(app.spectrum_layout, app::SpectrumLayout::Off);
+        assert!(!app.spectrum_visible());
+        type_keys(&mut app, &["w"]);
+        assert_eq!(app.spectrum_layout, app::SpectrumLayout::Wide);
     }
 
     #[test]

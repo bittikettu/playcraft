@@ -55,6 +55,8 @@ pub struct Audio {
 pub struct Ui {
     pub fps: u32,
     pub show_spectrum: bool,
+    /// `wide`: a full-width strip under the playlist; `pane`: inside Now Playing.
+    pub spectrum_layout: String,
     pub color_theme: String,
     pub charset: String,
     pub show_hidden: bool,
@@ -65,6 +67,7 @@ impl Default for Ui {
         Ui {
             fps: 60,
             show_spectrum: true,
+            spectrum_layout: "wide".into(),
             color_theme: DEFAULT_THEME.into(),
             charset: "unicode".into(),
             show_hidden: false,
@@ -171,6 +174,13 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             theme_names().join(", ")
         ));
         ui.color_theme = Ui::default().color_theme;
+    }
+    if !["wide", "pane"].contains(&ui.spectrum_layout.as_str()) {
+        warnings.push(format!(
+            "config: spectrum_layout must be \"wide\" or \"pane\", not \"{}\"",
+            ui.spectrum_layout
+        ));
+        ui.spectrum_layout = Ui::default().spectrum_layout;
     }
     if !["unicode", "ascii"].contains(&ui.charset.as_str()) {
         warnings.push(format!(
@@ -329,6 +339,8 @@ pub fn default_file_text() -> String {
          [ui]\n\
          fps = 60\n\
          show_spectrum = true\n\
+         # wide (full-width strip under the playlist) or pane (inside Now Playing); f = fullscreen\n\
+         spectrum_layout = \"wide\"\n\
          # THEME_LIST\n\
          color_theme = \"DEFAULT_THEME\"\n\
          # unicode or ascii (use ascii in the legacy console with raster fonts)\n\

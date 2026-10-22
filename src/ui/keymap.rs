@@ -52,6 +52,8 @@ pub enum Action {
     MoveDown,
     ShowLog,
     ThemeSelector,
+    SpectrumFullscreen,
+    SpectrumLayout,
     Close,
     #[cfg(debug_assertions)]
     DebugPanic,
@@ -96,6 +98,8 @@ impl Action {
         Action::Help,
         Action::ShowLog,
         Action::ThemeSelector,
+        Action::SpectrumFullscreen,
+        Action::SpectrumLayout,
         Action::Close,
         Action::Quit,
     ];
@@ -141,6 +145,8 @@ impl Action {
             Action::MoveDown => "move_down",
             Action::ShowLog => "show_log",
             Action::ThemeSelector => "theme_selector",
+            Action::SpectrumFullscreen => "spectrum_fullscreen",
+            Action::SpectrumLayout => "spectrum_layout",
             Action::Close => "close",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "debug_panic",
@@ -193,6 +199,8 @@ impl Action {
             Action::MoveDown => "Move item down",
             Action::ShowLog => "Message log",
             Action::ThemeSelector => "Choose colour theme",
+            Action::SpectrumFullscreen => "Fullscreen spectrum analyser",
+            Action::SpectrumLayout => "Spectrum: wide / in panel / off",
             Action::Close => "Close view / cancel",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "Crash on purpose (debug builds)",
@@ -382,6 +390,8 @@ impl Default for Keymap {
             (C::Global, ToggleGroupShuffle, &["z"]),
             (C::Global, ShowLog, &["L"]),
             (C::Global, ThemeSelector, &["t"]),
+            (C::Global, SpectrumFullscreen, &["f"]),
+            (C::Global, SpectrumLayout, &["w"]),
             (C::Global, Close, &["Esc"]),
             (C::Global, Quit, &["q", "Ctrl+c"]),
             (C::Playlist, RenameGroup, &["R"]),
