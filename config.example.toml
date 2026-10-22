@@ -19,7 +19,8 @@ show_spectrum = true
 # wide (full-width strip under the playlist) or pane (inside Now Playing); f = fullscreen
 spectrum_layout = "wide"
 # bars, matrix (digital rain of the playing file's own bytes) or defrag
-# (a disk defragmenter that finishes with the song); v cycles them
+# (a disk defragmenter that finishes with the song) or hyperspace (3D demoscene);
+# v cycles them
 visualizer = "bars"
 # dracula, tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome (or press t in the player)
 color_theme = "dracula"

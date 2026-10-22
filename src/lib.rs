@@ -4,6 +4,7 @@ pub mod audio;
 pub mod config;
 pub mod defrag;
 pub mod headless;
+pub mod hyperspace;
 pub mod library;
 pub mod log_ring;
 pub mod matrix;

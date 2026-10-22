@@ -57,7 +57,7 @@ pub struct Ui {
     pub show_spectrum: bool,
     /// `wide`: a full-width strip under the playlist; `pane`: inside Now Playing.
     pub spectrum_layout: String,
-    /// `bars`, `matrix` (digital rain of the playing file's bytes) or `defrag`.
+    /// `bars`, `matrix` (digital rain of the file's bytes), `defrag` or `hyperspace`.
     pub visualizer: String,
     pub color_theme: String,
     pub charset: String,
@@ -178,9 +178,9 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
         ));
         ui.color_theme = Ui::default().color_theme;
     }
-    if !["bars", "matrix", "defrag"].contains(&ui.visualizer.as_str()) {
+    if !["bars", "matrix", "defrag", "hyperspace"].contains(&ui.visualizer.as_str()) {
         warnings.push(format!(
-            "config: visualizer must be \"bars\", \"matrix\" or \"defrag\", not \"{}\"",
+            "config: visualizer must be bars, matrix, defrag or hyperspace, not \"{}\"",
             ui.visualizer
         ));
         ui.visualizer = Ui::default().visualizer;
@@ -352,7 +352,8 @@ pub fn default_file_text() -> String {
          # wide (full-width strip under the playlist) or pane (inside Now Playing); f = fullscreen\n\
          spectrum_layout = \"wide\"\n\
          # bars, matrix (digital rain of the playing file's own bytes) or defrag\n\
-         # (a disk defragmenter that finishes with the song); v cycles them\n\
+         # (a disk defragmenter that finishes with the song) or hyperspace (3D demoscene);\n\
+         # v cycles them\n\
          visualizer = \"bars\"\n\
          # THEME_LIST\n\
          color_theme = \"DEFAULT_THEME\"\n\

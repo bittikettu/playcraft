@@ -12,6 +12,7 @@ use crossbeam_channel::Receiver;
 use crate::audio::{AudioCommand, AudioHandle, StreamInfo};
 use crate::config::{Config, ReplayGainMode};
 use crate::defrag::Defrag;
+use crate::hyperspace::Hyperspace;
 use crate::library::scanner::MetadataScanner;
 use crate::matrix::MatrixRain;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
@@ -56,6 +57,8 @@ pub enum Visualizer {
     Matrix,
     /// Windows 98-style disk defragmenter; fully defragmented when the song ends.
     Defrag,
+    /// Audio-reactive 3D demoscene: warp starfield, spectrum sphere, beat shockwaves.
+    Hyperspace,
 }
 
 impl Visualizer {
@@ -63,7 +66,8 @@ impl Visualizer {
         match self {
             Visualizer::Bars => Visualizer::Matrix,
             Visualizer::Matrix => Visualizer::Defrag,
-            Visualizer::Defrag => Visualizer::Bars,
+            Visualizer::Defrag => Visualizer::Hyperspace,
+            Visualizer::Hyperspace => Visualizer::Bars,
         }
     }
 
@@ -72,6 +76,7 @@ impl Visualizer {
             Visualizer::Bars => "spectrum bars",
             Visualizer::Matrix => "Matrix rain of the file's bytes",
             Visualizer::Defrag => "disk defragmenter",
+            Visualizer::Hyperspace => "HYPERSPACE",
         }
     }
 }
@@ -184,6 +189,8 @@ pub struct App {
     pub rain: MatrixRain,
     /// The disk being defragmented (the Defrag visualizer).
     pub defrag: Defrag,
+    /// The HYPERSPACE demoscene visualizer.
+    pub hyperspace: Hyperspace,
     /// View to return to when the fullscreen visualizer closes.
     pub(crate) view_before_visualizer: View,
     pub spectrum: SpectrumAnalyzer,
@@ -230,6 +237,7 @@ impl App {
             visualizer: Visualizer::Bars,
             rain: MatrixRain::default(),
             defrag: Defrag::new(),
+            hyperspace: Hyperspace::default(),
             view_before_visualizer: View::Playlist,
             spectrum: SpectrumAnalyzer::new(),
             last_spectrum_update: Instant::now(),
@@ -259,7 +267,10 @@ impl App {
     /// Whether the screen changes on its own (progress bar, spectrum).
     pub fn is_animating(&self) -> bool {
         self.status() == PlaybackStatus::Playing
-            || (self.spectrum_visible() && (self.spectrum.is_active() || self.rain.is_active()))
+            || (self.spectrum_visible()
+                && (self.spectrum.is_active()
+                    || self.rain.is_active()
+                    || (self.visualizer == Visualizer::Hyperspace && self.hyperspace.is_active())))
     }
 
     pub fn current_group(&self) -> &Group {
@@ -309,6 +320,7 @@ impl App {
         self.visualizer = match config.ui.visualizer.as_str() {
             "matrix" => Visualizer::Matrix,
             "defrag" => Visualizer::Defrag,
+            "hyperspace" => Visualizer::Hyperspace,
             _ => Visualizer::Bars,
         };
         self.replaygain = config.general.replaygain;
@@ -388,6 +400,51 @@ impl App {
                 self.rain.feed.set_source(path, fraction);
                 self.rain.update(dt.as_secs_f32(), self.spectrum.bands());
             }
+            if self.visualizer == Visualizer::Hyperspace {
+                let wave = self.spectrum.waveform(256);
+                let title = self.now_playing_title();
+                let track = self.now.as_ref().map(|n| {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(&n.path, &mut h);
+                    std::hash::Hasher::finish(&h)
+                });
+                let playing = self.status() == PlaybackStatus::Playing;
+                self.hyperspace.update(
+                    dt.as_secs_f32(),
+                    self.spectrum.bands(),
+                    &wave,
+                    track.zip(title.as_deref()),
+                    playing,
+                );
+            }
+        }
+    }
+
+    /// "Artist - Title" (or the file name) of the playing track.
+    pub fn now_playing_title(&self) -> Option<String> {
+        let now = self.now.as_ref()?;
+        let from_tags = now
+            .track
+            .and_then(|u| self.root.track_by_uid(u))
+            .map(|t| t.display_name());
+        Some(from_tags.unwrap_or_else(|| {
+            now.path
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        }))
+    }
+
+    /// Frames per second for the current view. The HYPERSPACE framebuffer sends a lot of
+    /// colour data to the terminal, so it is capped at 30.
+    pub fn effective_fps(&self) -> u32 {
+        let hyperspace_on_screen = self.visualizer == Visualizer::Hyperspace
+            && (self.view == View::Visualizer
+                || (self.view == View::Playlist && self.spectrum_layout == SpectrumLayout::Wide));
+        if hyperspace_on_screen {
+            self.fps.min(30)
+        } else {
+            self.fps
         }
     }
 

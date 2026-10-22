@@ -4,6 +4,7 @@
 mod defrag;
 mod file_manager;
 mod help;
+mod hyperspace;
 mod log;
 mod now_playing;
 mod playlist;

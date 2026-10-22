@@ -143,6 +143,14 @@ impl SpectrumAnalyzer {
         self.bands.iter().chain(&self.peaks).any(|&b| b > 0.0)
     }
 
+    /// The most recent `n` samples (mono, oldest first), for oscilloscope displays.
+    pub fn waveform(&self, n: usize) -> Vec<f32> {
+        let n = n.min(FFT_SIZE);
+        (0..n)
+            .map(|i| self.history[(self.write + FFT_SIZE - n + i) % FFT_SIZE])
+            .collect()
+    }
+
     /// Pushes samples directly (used by tests and when no tap is attached).
     pub fn push_samples(&mut self, samples: &[f32]) {
         for &s in samples {

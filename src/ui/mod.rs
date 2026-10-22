@@ -85,10 +85,12 @@ fn event_loop(
     app: &mut App,
     mut autosave: Option<&mut Autosave>,
 ) -> anyhow::Result<()> {
-    let frame_interval = Duration::from_secs_f64(1.0 / f64::from(app.fps.clamp(1, 240)));
     let mut dirty = true;
     let mut last_draw = Instant::now();
     while !app.quit {
+        // The frame rate depends on what is on screen (the HYPERSPACE visualizer is capped).
+        let frame_interval =
+            Duration::from_secs_f64(1.0 / f64::from(app.effective_fps().clamp(1, 240)));
         if let Some(autosave) = autosave.as_deref_mut() {
             autosave.tick(app);
         }
@@ -689,9 +691,107 @@ pub(crate) mod tests {
         // The wide strip shows the same defragmenter.
         type_keys(&mut app, &["f"]);
         assert!(render(&mut app, 120, 34).contains("complete"));
-        // v cycles back to the bars.
+        // v moves on to the next visualizer.
+        type_keys(&mut app, &["v"]);
+        assert_eq!(app.visualizer, app::Visualizer::Hyperspace);
+    }
+
+    #[test]
+    fn hyperspace_fills_the_screen_with_pixels() {
+        let mut app = test_app(sample_root());
+        app.now = Some(app::NowPlaying {
+            track: None,
+            path: std::path::PathBuf::from("Daft Punk - One More Time.flac"),
+            info: crate::audio::StreamInfo {
+                codec: "flac".into(),
+                sample_rate: 44_100,
+                channels: 2,
+            },
+            duration: Some(Duration::from_secs(320)),
+        });
+        type_keys(&mut app, &["v", "v", "v"]);
+        assert_eq!(app.visualizer, app::Visualizer::Hyperspace);
+        assert_eq!(app.effective_fps(), 30, "wide strip shows it: capped");
+        type_keys(&mut app, &["f"]);
+        render(&mut app, 100, 30);
+        for _ in 0..20 {
+            feed_tone(&mut app, 120.0);
+            let bands = app.spectrum.bands().to_vec();
+            let wave = app.spectrum.waveform(256);
+            app.hyperspace.update(
+                1.0 / 30.0,
+                &bands,
+                &wave,
+                Some((9, "Daft Punk - One More Time")),
+                true,
+            );
+            render(&mut app, 100, 30);
+        }
+        let screen = render(&mut app, 100, 30);
+        println!("{screen}");
+        assert!(screen.contains("HYPERSPACE"));
+        let half_blocks = screen.chars().filter(|&c| c == '▀').count();
+        assert!(half_blocks > 200, "only {half_blocks} half-block pixels");
+        assert!(app.is_animating());
+
+        // ASCII charset: one pixel per cell, no half blocks.
+        app.symbols = theme::Symbols::ASCII;
+        let screen = render(&mut app, 100, 30);
+        assert_eq!(screen.chars().filter(|&c| c == '▀').count(), 0);
         type_keys(&mut app, &["v"]);
         assert_eq!(app.visualizer, app::Visualizer::Bars);
+        assert_eq!(app.effective_fps(), app.fps);
+    }
+
+    /// `cargo test --release --lib hyperspace_frame_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn hyperspace_frame_cost() {
+        let mut app = test_app(sample_root());
+        app.visualizer = app::Visualizer::Hyperspace;
+        app.view = app::View::Visualizer;
+        let wave: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+        render(&mut app, 200, 60);
+        let start = Instant::now();
+        for i in 0..300 {
+            let level = if i % 15 == 0 { 0.95 } else { 0.6 };
+            app.hyperspace.update(
+                1.0 / 30.0,
+                &[level; 48],
+                &wave,
+                Some((1, "Benchmark")),
+                true,
+            );
+            render(&mut app, 200, 60);
+        }
+        let per_frame = start.elapsed() / 300;
+        println!("200x60 cells (200x120 pixels): {per_frame:?} per frame");
+        assert!(per_frame < Duration::from_millis(30));
+
+        // Terminal load in steady state: cells that change between consecutive frames.
+        let mut previous = render(&mut app, 120, 34);
+        let mut changed = 0usize;
+        for i in 0..90 {
+            let level = if i % 15 == 0 { 0.95 } else { 0.6 };
+            app.hyperspace.update(
+                1.0 / 30.0,
+                &[level; 48],
+                &wave,
+                Some((1, "Benchmark")),
+                true,
+            );
+            let screen = render(&mut app, 120, 34);
+            changed += screen
+                .chars()
+                .zip(previous.chars())
+                .filter(|(a, b)| a != b)
+                .count();
+            previous = screen;
+        }
+        println!(
+            "120x34: ~{} glyph changes per frame (colour-only changes not counted)",
+            changed / 90
+        );
     }
 
     #[test]

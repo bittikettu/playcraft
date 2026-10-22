@@ -224,6 +224,10 @@ fn draw_bars(f: &mut Frame<'_>, app: &mut App, inner: Rect) {
         super::defrag::draw(f, app, inner);
         return;
     }
+    if app.visualizer == Visualizer::Hyperspace {
+        super::hyperspace::draw(f, app, inner);
+        return;
+    }
     if app.visualizer == Visualizer::Matrix {
         app.rain.resize(width, height);
         f.render_widget(Paragraph::new(matrix_lines(app)), inner);
@@ -242,6 +246,7 @@ fn draw_bars(f: &mut Frame<'_>, app: &mut App, inner: Rect) {
 pub fn draw_strip(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let title = match app.visualizer {
         Visualizer::Defrag => super::defrag::status(app),
+        Visualizer::Hyperspace => super::hyperspace::status(app),
         _ => " Spectrum ".to_string(),
     };
     let block = Block::bordered()
@@ -284,9 +289,13 @@ pub fn draw_fullscreen(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         ),
         _ => format!(" {key}/Esc: back "),
     };
-    let (title, back) = if app.visualizer == Visualizer::Defrag {
-        // Defrag: the defragmenter status on the left, the track next to the key hint.
-        let status = super::defrag::status(app);
+    let status = match app.visualizer {
+        Visualizer::Defrag => Some(super::defrag::status(app)),
+        Visualizer::Hyperspace => Some(super::hyperspace::status(app)),
+        _ => None,
+    };
+    let (title, back) = if let Some(status) = status {
+        // Status on the left, the track next to the key hint.
         let room = (area.width as usize).saturating_sub(status.len() + back.len() + 6);
         let track = truncate(now.as_deref().unwrap_or(""), room, app.symbols.ellipsis);
         let right = if track.trim().is_empty() {
