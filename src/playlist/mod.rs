@@ -19,24 +19,24 @@ pub struct Startup {
 /// A single playlist argument becomes the playlist itself. Otherwise files and folders go to
 /// the root group and each playlist becomes a group of its own.
 pub fn from_paths(paths: &[PathBuf]) -> Startup {
-    if let [only] = paths {
-        if is_playlist_file(only) {
-            return match io::load(only) {
-                Ok(mut root) => {
-                    root.name = "Root".into();
-                    Startup {
-                        root,
-                        playlist_path: Some(only.clone()),
-                        errors: Vec::new(),
-                    }
+    if let [only] = paths
+        && is_playlist_file(only)
+    {
+        return match io::load(only) {
+            Ok(mut root) => {
+                root.name = "Root".into();
+                Startup {
+                    root,
+                    playlist_path: Some(only.clone()),
+                    errors: Vec::new(),
                 }
-                Err(e) => Startup {
-                    root: Group::new(0, "Root"),
-                    playlist_path: None,
-                    errors: vec![format!("{}: {e}", only.display())],
-                },
-            };
-        }
+            }
+            Err(e) => Startup {
+                root: Group::new(0, "Root"),
+                playlist_path: None,
+                errors: vec![format!("{}: {e}", only.display())],
+            },
+        };
     }
     let mut root = Group::new(0, "Root");
     let mut errors = Vec::new();

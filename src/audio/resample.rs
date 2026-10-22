@@ -276,7 +276,7 @@ mod tests {
         }
         r.finish(&mut out);
         assert_eq!(out.len() / 2, 96_000, "output frames");
-        let mono: Vec<f32> = out.chunks_exact(2).map(|f| f[0]).collect();
+        let mono: Vec<f32> = out.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
         let f = peak_frequency(&mono[10_000..], 48_000);
         assert!((f - 440.0).abs() < 8.0, "peak at {f} Hz");
     }

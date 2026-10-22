@@ -47,8 +47,17 @@ pub enum View {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overlay {
     None,
-    Help { scroll: u16 },
-    Log { scroll: u16 },
+    Help {
+        scroll: u16,
+    },
+    Log {
+        scroll: u16,
+    },
+    /// Theme picker: `cursor` indexes `theme::THEMES`; `original` is restored on cancel.
+    Themes {
+        cursor: usize,
+        original: &'static str,
+    },
 }
 
 /// A row of the playlist view: subgroups are listed before tracks.
@@ -105,6 +114,8 @@ pub struct App {
     pub repeat: RepeatMode,
     /// Playlist file last loaded or saved (default for the save prompt).
     pub playlist_path: Option<PathBuf>,
+    /// The config file (it may not exist yet); the theme picker saves its choice there.
+    pub config_path: Option<PathBuf>,
     /// Live search filter for the playlist view.
     pub filter: Option<String>,
     pub show_spectrum: bool,
@@ -146,6 +157,7 @@ impl App {
             play_mode: PlayMode::default(),
             repeat: RepeatMode::default(),
             playlist_path: None,
+            config_path: crate::paths::config_file(),
             filter: None,
             show_spectrum: true,
             spectrum: SpectrumAnalyzer::new(),
@@ -265,11 +277,11 @@ impl App {
 
     /// Expires timed state. Returns true when the screen needs redrawing.
     pub fn tick(&mut self) -> bool {
-        if let Some(until) = self.banner.as_ref().and_then(|b| b.until) {
-            if Instant::now() >= until {
-                self.banner = None;
-                return true;
-            }
+        if let Some(until) = self.banner.as_ref().and_then(|b| b.until)
+            && Instant::now() >= until
+        {
+            self.banner = None;
+            return true;
         }
         false
     }
@@ -346,6 +358,9 @@ impl App {
         };
         let (scroll, is_log) = match self.overlay {
             Overlay::None => return self.on_action(action),
+            Overlay::Themes { cursor, original } => {
+                return self.on_theme_key(action, cursor, original);
+            }
             Overlay::Help { scroll } => (scroll, false),
             // The log scrolls up from its newest line, so "up" means older.
             Overlay::Log { scroll } => (scroll, true),
@@ -438,6 +453,7 @@ impl App {
             }
             Action::Help => self.overlay = Overlay::Help { scroll: 0 },
             Action::ShowLog => self.overlay = Overlay::Log { scroll: 0 },
+            Action::ThemeSelector => self.open_theme_selector(),
             Action::Close => {
                 if self.filter.take().is_none() {
                     self.banner = None;

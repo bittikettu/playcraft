@@ -14,10 +14,11 @@ pub fn parse(text: &str, base: &Path) -> Group {
             continue;
         };
         let key = key.trim();
-        if key.len() > 4 && key[..4].eq_ignore_ascii_case("file") {
-            if let Ok(n) = key[4..].parse::<u32>() {
-                files.insert(n, value.trim().to_string());
-            }
+        if key.len() > 4
+            && key[..4].eq_ignore_ascii_case("file")
+            && let Ok(n) = key[4..].parse::<u32>()
+        {
+            files.insert(n, value.trim().to_string());
         }
     }
     let mut root = Group::new(0, "");

@@ -8,6 +8,7 @@ mod now_playing;
 mod playlist;
 mod progress;
 mod status_bar;
+mod themes;
 
 use std::time::Duration;
 
@@ -58,6 +59,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     match app.overlay {
         Overlay::Help { scroll } => help::draw(f, app, centered(area, 80, 85), scroll),
         Overlay::Log { scroll } => log::draw(f, app, centered(area, 90, 85), scroll),
+        Overlay::Themes { cursor, original } => themes::draw(f, app, area, cursor, original),
         Overlay::None => {}
     }
 }

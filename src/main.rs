@@ -91,6 +91,7 @@ fn main() -> anyhow::Result<()> {
     let audio = AudioHandle::spawn(audio_config);
     let mut app = App::new(audio, startup.root);
     app.playlist_path = startup.playlist_path;
+    app.config_path = loaded.path.clone();
     let mut warnings = loaded.warnings;
     warnings.extend(app.apply_config(&cfg));
     warnings.extend(startup.errors);

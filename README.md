@@ -35,7 +35,8 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
 - **Spectrum analyser** (16 bands), **ReplayGain** (track or album, limited to avoid clipping), and logarithmic, click-free volume.
 - **Audio device handling:** device unplugged → playback pauses with a banner and resumes when the device returns. Windows default device changes → playback follows.
 - **Sessions:** the playlist, track, position, volume and modes are restored on the next start. They are saved every 30 s, on quit, and when the console window is closed.
-- **Configuration:** themes (`classic_blue`, `gruvbox`, `catppuccin`, `monochrome`), an ASCII mode for legacy consoles, and fully rebindable keys.
+- **Themes:** Dracula (the default), Tokyo Night, One Dark, Monokai, Nord, Catppuccin, Gruvbox, the original Classic Blue, and Monochrome. Press `t` to open the picker, which previews each theme live and saves your choice to `config.toml`.
+- **Configuration:** an ASCII mode for legacy consoles and fully rebindable keys.
 
 ## Building
 
@@ -84,6 +85,7 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 | Search / filter | `/` | `/` |
 | Volume down / up | `<` / `>` | `-` / `+` (also `=`) |
 | Help / message log | `?` / `L` | |
+| Colour theme picker | | `t` |
 | Quit | `q` | Ctrl+c |
 
 **Playlist view:**
@@ -122,7 +124,7 @@ replaygain = "track"        # off, track, album
 output_device = "Arctis"    # part of a device name; empty follows the Windows default
 
 [ui]
-color_theme = "gruvbox"     # RGB themes need a truecolor terminal (Windows Terminal is fine)
+color_theme = "dracula"     # or tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome
 charset = "ascii"           # for the legacy console with raster fonts
 
 [keybindings]
@@ -155,8 +157,9 @@ next_track = ["n", "6"]
 - **Spectrum FFT:** it runs on the UI thread from a tap buffer instead of inside the real-time audio callback, so the callback never does heavy work.
 - **Resampling:** `rubato` resamples to the device rate. The spec's crate list has no resampler, but WASAPI shared mode needs one.
 - **Groups:** groups gain a `shuffle` flag, and the original MP3Blaster play modes are added.
+- **Themes:** the default is Dracula instead of `classic_blue`. The spec's four themes are kept, five VS Code themes are added, and there is an in-app picker (`t`).
 - **Additions:**
-  - keys: Enter, Backspace, `?`, F3/F4, `L`, `m`, `r`, `z`, `R`, `d`, `K`/`J`;
+  - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `m`, `r`, `z`, `R`, `d`, `K`/`J`;
   - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`;
   - the `[keybindings.file_manager]` section.
 - **Key conflict:** the spec's UI mockup shows F1 as Help, but its key table says F1 opens the file manager. The key table wins, so Help is `?`.

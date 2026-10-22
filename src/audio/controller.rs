@@ -562,10 +562,12 @@ impl Controller {
         self.queued = path;
         self.preopened = None;
         // The current track already ran out while nothing was queued: continue right away.
-        if self.eof && self.current.is_some() && self.queued.is_some() {
-            if let Some(decoder) = self.open_queued() {
-                self.continue_with(decoder);
-            }
+        if self.eof
+            && self.current.is_some()
+            && self.queued.is_some()
+            && let Some(decoder) = self.open_queued()
+        {
+            self.continue_with(decoder);
         }
     }
 
@@ -851,18 +853,18 @@ impl Controller {
             self.segments.pop_front();
         }
         let mut started = None;
-        if let Some(seg) = self.segments.front_mut() {
-            if seg.start_frame <= played {
-                if !seg.announced {
-                    seg.announced = true;
-                    started = Some(seg.track.clone());
-                }
-                let mut pos = seg.track_pos + frames_to_duration(played - seg.start_frame, rate);
-                if let Some(d) = seg.track.duration {
-                    pos = pos.min(d);
-                }
-                self.shared.set_position(pos);
+        if let Some(seg) = self.segments.front_mut()
+            && seg.start_frame <= played
+        {
+            if !seg.announced {
+                seg.announced = true;
+                started = Some(seg.track.clone());
             }
+            let mut pos = seg.track_pos + frames_to_duration(played - seg.start_frame, rate);
+            if let Some(d) = seg.track.duration {
+                pos = pos.min(d);
+            }
+            self.shared.set_position(pos);
         }
         if let Some(track) = started {
             self.shared.set_duration(track.duration.unwrap_or_default());

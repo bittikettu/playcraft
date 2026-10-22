@@ -16,8 +16,8 @@ output_device = ""
 [ui]
 fps = 60
 show_spectrum = true
-# classic_blue, gruvbox, catppuccin, monochrome
-color_theme = "classic_blue"
+# dracula, tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome (or press t in the player)
+color_theme = "dracula"
 # unicode or ascii (use ascii in the legacy console with raster fonts)
 charset = "unicode"
 show_hidden = false
@@ -55,6 +55,7 @@ show_hidden = false
 # search = ["/"]
 # help = ["?"]
 # show_log = ["L"]
+# theme_selector = ["t"]
 # close = ["Esc"]
 # quit = ["q", "Ctrl+c"]
 

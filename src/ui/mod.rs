@@ -9,6 +9,7 @@ mod playback;
 mod playlist_io;
 pub mod prompt;
 pub mod theme;
+mod theme_picker;
 mod views;
 
 use std::path::PathBuf;
@@ -518,6 +519,41 @@ pub(crate) mod tests {
         assert!(screen.contains("spectrum test warning"));
         type_keys(&mut app, &["Esc"]);
         assert_eq!(app.overlay, app::Overlay::None);
+    }
+
+    #[test]
+    fn theme_picker_previews_reverts_and_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        std::fs::write(&config, "# keep me\n[ui]\ncolor_theme = \"dracula\"\n").unwrap();
+        let mut app = test_app(sample_root());
+        app.config_path = Some(config.clone());
+        app.theme = theme::Theme::dracula();
+
+        type_keys(&mut app, &["t"]);
+        let screen = render(&mut app, 100, 30);
+        println!("{screen}");
+        assert!(screen.contains("Colour theme"));
+        assert!(screen.contains("Dracula") && screen.contains("Tokyo Night"));
+
+        // Moving previews immediately; Esc restores the original theme.
+        type_keys(&mut app, &["Down"]);
+        assert_eq!(app.theme.name, "tokyo_night");
+        type_keys(&mut app, &["Esc"]);
+        assert_eq!(app.theme.name, "dracula");
+        assert_eq!(app.overlay, app::Overlay::None);
+
+        // Up wraps around to the last theme; Enter keeps it and saves it to the config.
+        type_keys(&mut app, &["t", "Up", "Up", "Enter"]);
+        assert_eq!(app.theme.name, "classic_blue");
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(text.contains("color_theme = \"classic_blue\""), "{text}");
+        assert!(text.contains("# keep me"));
+        assert!(
+            app.banner
+                .as_ref()
+                .is_some_and(|b| b.text.contains("saved"))
+        );
     }
 
     #[test]

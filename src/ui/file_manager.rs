@@ -78,10 +78,10 @@ impl FileManager {
         self.scroll = 0;
         self.cursor = 0;
         self.reload();
-        if let Some(focus) = focus {
-            if let Some(i) = self.entries.iter().position(|e| e.path == focus) {
-                self.cursor = i;
-            }
+        if let Some(focus) = focus
+            && let Some(i) = self.entries.iter().position(|e| e.path == focus)
+        {
+            self.cursor = i;
         }
     }
 
@@ -108,10 +108,10 @@ impl FileManager {
     }
 
     pub fn toggle_current(&mut self) {
-        if let Some(entry) = self.current().filter(|e| e.is_selectable()).cloned() {
-            if !self.selected.remove(&entry.path) {
-                self.selected.insert(entry.path);
-            }
+        if let Some(entry) = self.current().filter(|e| e.is_selectable()).cloned()
+            && !self.selected.remove(&entry.path)
+        {
+            self.selected.insert(entry.path);
         }
         self.cursor = (self.cursor + 1).min(self.entries.len().saturating_sub(1));
     }

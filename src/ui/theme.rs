@@ -1,7 +1,7 @@
 //! Colour themes and character sets.
 //!
-//! `classic_blue` and `monochrome` use only the 16 ANSI colours so they render in the legacy
-//! Windows console; RGB themes are only used when the terminal advertises truecolor.
+//! The RGB themes follow popular VS Code colour schemes; Dracula is the default.
+//! `classic_blue` and `monochrome` use only the 16 ANSI colours and work everywhere.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
@@ -22,35 +22,340 @@ pub struct Theme {
     pub progress_done: Style,
     pub progress_todo: Style,
     pub spectrum: Style,
+    /// Colour for the tops of tall spectrum bars.
+    pub spectrum_hot: Style,
     pub info: Style,
     pub warning: Style,
     pub error: Style,
 }
 
-/// Whether the terminal can show 24-bit colour. Windows Terminal sets `WT_SESSION`.
+/// A theme as listed in the theme selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThemeInfo {
+    /// Name used in `config.toml`.
+    pub name: &'static str,
+    pub label: &'static str,
+    /// Needs a 24-bit colour terminal.
+    pub truecolor: bool,
+}
+
+pub const DEFAULT_THEME: &str = "dracula";
+
+pub const THEMES: &[ThemeInfo] = &[
+    ThemeInfo {
+        name: "dracula",
+        label: "Dracula",
+        truecolor: true,
+    },
+    ThemeInfo {
+        name: "tokyo_night",
+        label: "Tokyo Night",
+        truecolor: true,
+    },
+    ThemeInfo {
+        name: "one_dark",
+        label: "One Dark",
+        truecolor: true,
+    },
+    ThemeInfo {
+        name: "monokai",
+        label: "Monokai",
+        truecolor: true,
+    },
+    ThemeInfo {
+        name: "nord",
+        label: "Nord",
+        truecolor: true,
+    },
+    ThemeInfo {
+        name: "catppuccin",
+        label: "Catppuccin Mocha",
+        truecolor: true,
+    },
+    ThemeInfo {
+        name: "gruvbox",
+        label: "Gruvbox Dark",
+        truecolor: true,
+    },
+    ThemeInfo {
+        name: "classic_blue",
+        label: "Classic Blue (MP3Blaster)",
+        truecolor: false,
+    },
+    ThemeInfo {
+        name: "monochrome",
+        label: "Monochrome",
+        truecolor: false,
+    },
+];
+
+pub fn theme_info(name: &str) -> Option<&'static ThemeInfo> {
+    THEMES.iter().find(|t| t.name == name)
+}
+
+/// Whether the terminal can show 24-bit colour. Windows 10+ consoles (Windows Terminal and
+/// conhost with VT processing, which crossterm enables) always can; elsewhere `COLORTERM`
+/// tells.
 pub fn supports_truecolor() -> bool {
-    std::env::var_os("WT_SESSION").is_some()
+    cfg!(windows)
+        || std::env::var_os("WT_SESSION").is_some()
         || std::env::var("COLORTERM").is_ok_and(|v| v == "truecolor" || v == "24bit")
+}
+
+/// The colours of an RGB theme, as `0xRRGGBB`.
+struct Palette {
+    bg: u32,
+    fg: u32,
+    comment: u32,
+    border: u32,
+    cursor_fg: u32,
+    cursor_bg: u32,
+    track: u32,
+    title: u32,
+    key: u32,
+    playing: u32,
+    group: u32,
+    missing: u32,
+    selected: u32,
+    progress: u32,
+    spectrum: u32,
+    hot: u32,
+    info: u32,
+    warning: u32,
+}
+
+impl Palette {
+    fn theme(&self, name: &'static str) -> Theme {
+        let c = Color::from_u32;
+        let base = Style::new().fg(c(self.fg)).bg(c(self.bg));
+        let bold = Modifier::BOLD;
+        Theme {
+            name,
+            base,
+            border: base.fg(c(self.border)),
+            title: base.fg(c(self.title)).add_modifier(bold),
+            key: base.fg(c(self.key)).add_modifier(bold),
+            dim: base.fg(c(self.comment)),
+            cursor: Style::new()
+                .fg(c(self.cursor_fg))
+                .bg(c(self.cursor_bg))
+                .add_modifier(bold),
+            playing: base.fg(c(self.playing)).add_modifier(bold),
+            group: base.fg(c(self.group)).add_modifier(bold),
+            missing: base.fg(c(self.missing)),
+            selected: base.fg(c(self.selected)).add_modifier(bold),
+            progress_done: base.fg(c(self.progress)),
+            progress_todo: base.fg(c(self.track)),
+            spectrum: base.fg(c(self.spectrum)),
+            spectrum_hot: base.fg(c(self.hot)),
+            info: base.fg(c(self.info)),
+            warning: base.fg(c(self.warning)).add_modifier(bold),
+            error: Style::new()
+                .fg(c(self.bg))
+                .bg(c(self.missing))
+                .add_modifier(bold),
+        }
+    }
 }
 
 impl Theme {
     /// Looks up a theme by its config name. RGB themes fall back to `classic_blue` when
     /// truecolor is unavailable; the second value explains why.
     pub fn by_name(name: &str, truecolor: bool) -> (Theme, Option<String>) {
-        match name {
-            "gruvbox" | "catppuccin" if !truecolor => (
+        let needs_rgb = theme_info(name).is_some_and(|t| t.truecolor);
+        if needs_rgb && !truecolor {
+            return (
                 Theme::classic_blue(),
                 Some(format!(
                     "Theme \"{name}\" needs a truecolor terminal (e.g. Windows Terminal); using classic_blue"
                 )),
-            ),
-            "gruvbox" => (Theme::gruvbox(), None),
-            "catppuccin" => (Theme::catppuccin(), None),
-            "monochrome" => (Theme::monochrome(), None),
-            _ => (Theme::classic_blue(), None),
+            );
         }
+        let theme = match name {
+            "dracula" => Theme::dracula(),
+            "tokyo_night" => Theme::tokyo_night(),
+            "one_dark" => Theme::one_dark(),
+            "monokai" => Theme::monokai(),
+            "nord" => Theme::nord(),
+            "catppuccin" => Theme::catppuccin(),
+            "gruvbox" => Theme::gruvbox(),
+            "monochrome" => Theme::monochrome(),
+            _ => Theme::classic_blue(),
+        };
+        (theme, None)
     }
 
+    /// Dracula: the "vampire" theme familiar from VS Code.
+    pub fn dracula() -> Self {
+        Palette {
+            bg: 0x282a36,
+            fg: 0xf8f8f2,
+            comment: 0x6272a4,
+            border: 0x6272a4,
+            cursor_fg: 0xf8f8f2,
+            cursor_bg: 0x44475a,
+            track: 0x44475a,
+            title: 0xbd93f9,
+            key: 0xff79c6,
+            playing: 0x50fa7b,
+            group: 0x8be9fd,
+            missing: 0xff5555,
+            selected: 0xffb86c,
+            progress: 0xff79c6,
+            spectrum: 0xbd93f9,
+            hot: 0xff79c6,
+            info: 0x50fa7b,
+            warning: 0xf1fa8c,
+        }
+        .theme("dracula")
+    }
+
+    pub fn tokyo_night() -> Self {
+        Palette {
+            bg: 0x1a1b26,
+            fg: 0xc0caf5,
+            comment: 0x565f89,
+            border: 0x3b4261,
+            cursor_fg: 0xc0caf5,
+            cursor_bg: 0x283457,
+            track: 0x292e42,
+            title: 0x7aa2f7,
+            key: 0xff9e64,
+            playing: 0x9ece6a,
+            group: 0x7dcfff,
+            missing: 0xf7768e,
+            selected: 0xbb9af7,
+            progress: 0x7aa2f7,
+            spectrum: 0x7dcfff,
+            hot: 0xbb9af7,
+            info: 0x9ece6a,
+            warning: 0xe0af68,
+        }
+        .theme("tokyo_night")
+    }
+
+    pub fn one_dark() -> Self {
+        Palette {
+            bg: 0x282c34,
+            fg: 0xabb2bf,
+            comment: 0x5c6370,
+            border: 0x4b5263,
+            cursor_fg: 0xe6e6e6,
+            cursor_bg: 0x3e4451,
+            track: 0x3e4451,
+            title: 0x61afef,
+            key: 0xe5c07b,
+            playing: 0x98c379,
+            group: 0x56b6c2,
+            missing: 0xe06c75,
+            selected: 0xc678dd,
+            progress: 0x61afef,
+            spectrum: 0xc678dd,
+            hot: 0xe06c75,
+            info: 0x98c379,
+            warning: 0xd19a66,
+        }
+        .theme("one_dark")
+    }
+
+    pub fn monokai() -> Self {
+        Palette {
+            bg: 0x272822,
+            fg: 0xf8f8f2,
+            comment: 0x75715e,
+            border: 0x75715e,
+            cursor_fg: 0xf8f8f2,
+            cursor_bg: 0x49483e,
+            track: 0x3e3d32,
+            title: 0xf92672,
+            key: 0xe6db74,
+            playing: 0xa6e22e,
+            group: 0x66d9ef,
+            missing: 0xf92672,
+            selected: 0xae81ff,
+            progress: 0xfd971f,
+            spectrum: 0x66d9ef,
+            hot: 0xf92672,
+            info: 0xa6e22e,
+            warning: 0xfd971f,
+        }
+        .theme("monokai")
+    }
+
+    pub fn nord() -> Self {
+        Palette {
+            bg: 0x2e3440,
+            fg: 0xd8dee9,
+            comment: 0x616e88,
+            border: 0x4c566a,
+            cursor_fg: 0xeceff4,
+            cursor_bg: 0x434c5e,
+            track: 0x3b4252,
+            title: 0x88c0d0,
+            key: 0xebcb8b,
+            playing: 0xa3be8c,
+            group: 0x8fbcbb,
+            missing: 0xbf616a,
+            selected: 0xb48ead,
+            progress: 0x88c0d0,
+            spectrum: 0x81a1c1,
+            hot: 0x88c0d0,
+            info: 0xa3be8c,
+            warning: 0xd08770,
+        }
+        .theme("nord")
+    }
+
+    /// Catppuccin Mocha.
+    pub fn catppuccin() -> Self {
+        Palette {
+            bg: 0x1e1e2e,
+            fg: 0xcdd6f4,
+            comment: 0xa6adc8,
+            border: 0x6c7086,
+            cursor_fg: 0x1e1e2e,
+            cursor_bg: 0x89b4fa,
+            track: 0x45475a,
+            title: 0xcba6f7,
+            key: 0xfab387,
+            playing: 0xa6e3a1,
+            group: 0x74c7ec,
+            missing: 0xf38ba8,
+            selected: 0xf5c2e7,
+            progress: 0xb4befe,
+            spectrum: 0x89b4fa,
+            hot: 0xcba6f7,
+            info: 0xa6e3a1,
+            warning: 0xf9e2af,
+        }
+        .theme("catppuccin")
+    }
+
+    pub fn gruvbox() -> Self {
+        Palette {
+            bg: 0x282828,
+            fg: 0xebdbb2,
+            comment: 0x928374,
+            border: 0x665c54,
+            cursor_fg: 0x282828,
+            cursor_bg: 0x83a598,
+            track: 0x504945,
+            title: 0xfabd2f,
+            key: 0xfe8019,
+            playing: 0xb8bb26,
+            group: 0x8ec07c,
+            missing: 0xfb4934,
+            selected: 0xd3869b,
+            progress: 0xfabd2f,
+            spectrum: 0x8ec07c,
+            hot: 0xfabd2f,
+            info: 0xb8bb26,
+            warning: 0xfe8019,
+        }
+        .theme("gruvbox")
+    }
+
+    /// The original MP3Blaster look, in the 16 ANSI colours.
     pub fn classic_blue() -> Self {
         let base = Style::new().fg(Color::White).bg(Color::Blue);
         Theme {
@@ -68,66 +373,12 @@ impl Theme {
             progress_done: base.fg(Color::Yellow),
             progress_todo: base.fg(Color::Gray),
             spectrum: base.fg(Color::LightCyan),
+            spectrum_hot: base.fg(Color::Yellow),
             info: base.fg(Color::LightGreen),
             warning: base.fg(Color::Yellow).add_modifier(Modifier::BOLD),
             error: Style::new()
                 .fg(Color::White)
                 .bg(Color::Red)
-                .add_modifier(Modifier::BOLD),
-        }
-    }
-
-    pub fn gruvbox() -> Self {
-        let rgb = |hex: u32| Color::from_u32(hex);
-        let base = Style::new().fg(rgb(0xebdbb2)).bg(rgb(0x282828));
-        Theme {
-            name: "gruvbox",
-            base,
-            border: base.fg(rgb(0x665c54)),
-            title: base.fg(rgb(0xfabd2f)).add_modifier(Modifier::BOLD),
-            key: base.fg(rgb(0xfe8019)).add_modifier(Modifier::BOLD),
-            dim: base.fg(rgb(0x928374)),
-            cursor: Style::new().fg(rgb(0x282828)).bg(rgb(0x83a598)),
-            playing: base.fg(rgb(0xb8bb26)).add_modifier(Modifier::BOLD),
-            group: base.fg(rgb(0x8ec07c)).add_modifier(Modifier::BOLD),
-            missing: base.fg(rgb(0xfb4934)),
-            selected: base.fg(rgb(0xd3869b)).add_modifier(Modifier::BOLD),
-            progress_done: base.fg(rgb(0xfabd2f)),
-            progress_todo: base.fg(rgb(0x504945)),
-            spectrum: base.fg(rgb(0x8ec07c)),
-            info: base.fg(rgb(0xb8bb26)),
-            warning: base.fg(rgb(0xfe8019)).add_modifier(Modifier::BOLD),
-            error: Style::new()
-                .fg(rgb(0xfbf1c7))
-                .bg(rgb(0xcc241d))
-                .add_modifier(Modifier::BOLD),
-        }
-    }
-
-    /// Catppuccin Mocha.
-    pub fn catppuccin() -> Self {
-        let rgb = |hex: u32| Color::from_u32(hex);
-        let base = Style::new().fg(rgb(0xcdd6f4)).bg(rgb(0x1e1e2e));
-        Theme {
-            name: "catppuccin",
-            base,
-            border: base.fg(rgb(0x6c7086)),
-            title: base.fg(rgb(0xcba6f7)).add_modifier(Modifier::BOLD),
-            key: base.fg(rgb(0xfab387)).add_modifier(Modifier::BOLD),
-            dim: base.fg(rgb(0xa6adc8)),
-            cursor: Style::new().fg(rgb(0x1e1e2e)).bg(rgb(0x89b4fa)),
-            playing: base.fg(rgb(0xa6e3a1)).add_modifier(Modifier::BOLD),
-            group: base.fg(rgb(0x74c7ec)).add_modifier(Modifier::BOLD),
-            missing: base.fg(rgb(0xf38ba8)),
-            selected: base.fg(rgb(0xf5c2e7)).add_modifier(Modifier::BOLD),
-            progress_done: base.fg(rgb(0xb4befe)),
-            progress_todo: base.fg(rgb(0x45475a)),
-            spectrum: base.fg(rgb(0x89b4fa)),
-            info: base.fg(rgb(0xa6e3a1)),
-            warning: base.fg(rgb(0xf9e2af)).add_modifier(Modifier::BOLD),
-            error: Style::new()
-                .fg(rgb(0x1e1e2e))
-                .bg(rgb(0xf38ba8))
                 .add_modifier(Modifier::BOLD),
         }
     }
@@ -151,6 +402,7 @@ impl Theme {
             progress_done: bold,
             progress_todo: base.add_modifier(Modifier::DIM),
             spectrum: base,
+            spectrum_hot: bold,
             info: base,
             warning: bold,
             error: base.add_modifier(Modifier::REVERSED | Modifier::BOLD),
@@ -160,7 +412,7 @@ impl Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Theme::classic_blue()
+        Theme::by_name(DEFAULT_THEME, supports_truecolor()).0
     }
 }
 
@@ -236,14 +488,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_listed_theme_resolves_to_itself() {
+        for info in THEMES {
+            let (theme, warning) = Theme::by_name(info.name, true);
+            assert_eq!(theme.name, info.name);
+            assert!(warning.is_none());
+        }
+        assert!(theme_info(DEFAULT_THEME).is_some());
+    }
+
+    #[test]
     fn rgb_themes_need_truecolor() {
-        let (t, warn) = Theme::by_name("gruvbox", false);
-        assert_eq!(t.name, "classic_blue");
-        assert!(warn.is_some());
-        let (t, warn) = Theme::by_name("catppuccin", true);
-        assert_eq!(t.name, "catppuccin");
-        assert!(warn.is_none());
-        assert_eq!(Theme::by_name("monochrome", false).0.name, "monochrome");
+        for info in THEMES {
+            let (theme, warning) = Theme::by_name(info.name, false);
+            if info.truecolor {
+                assert_eq!(theme.name, "classic_blue", "{}", info.name);
+                assert!(warning.is_some());
+            } else {
+                assert_eq!(theme.name, info.name);
+            }
+        }
+    }
+
+    #[test]
+    fn dracula_uses_the_dracula_palette() {
+        let t = Theme::dracula();
+        assert_eq!(t.base.bg, Some(Color::Rgb(0x28, 0x2a, 0x36)));
+        assert_eq!(t.base.fg, Some(Color::Rgb(0xf8, 0xf8, 0xf2)));
+        assert_eq!(t.title.fg, Some(Color::Rgb(0xbd, 0x93, 0xf9)));
+        assert_eq!(t.key.fg, Some(Color::Rgb(0xff, 0x79, 0xc6)));
     }
 
     #[test]

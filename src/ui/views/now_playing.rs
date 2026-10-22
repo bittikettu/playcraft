@@ -151,7 +151,14 @@ fn spectrum_lines(app: &App, width: usize, rows: usize) -> Vec<Line<'static>> {
                     s.push(' ');
                 }
             }
-            Line::styled(s, app.theme.spectrum)
+            // The top third of tall bars glows in the theme's "hot" colour.
+            let hot = rows >= 3 && row < rows / 3;
+            let style = if hot {
+                app.theme.spectrum_hot
+            } else {
+                app.theme.spectrum
+            };
+            Line::styled(s, style)
         })
         .collect()
 }

@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::ui::keymap::{Action, Context, KeyBinding, Keymap};
+use crate::ui::theme::{DEFAULT_THEME, THEMES, theme_info};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,7 +65,7 @@ impl Default for Ui {
         Ui {
             fps: 60,
             show_spectrum: true,
-            color_theme: "classic_blue".into(),
+            color_theme: DEFAULT_THEME.into(),
             charset: "unicode".into(),
             show_hidden: false,
         }
@@ -106,7 +107,10 @@ pub struct Keybindings {
     pub main: BTreeMap<String, KeyList>,
 }
 
-pub const THEMES: &[&str] = &["classic_blue", "gruvbox", "catppuccin", "monochrome"];
+/// Names accepted for `[ui] color_theme`.
+pub fn theme_names() -> Vec<&'static str> {
+    THEMES.iter().map(|t| t.name).collect()
+}
 
 pub struct Loaded {
     pub config: Config,
@@ -160,11 +164,11 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
         warnings.push(format!("config: fps {} out of range 1-240", ui.fps));
         ui.fps = ui.fps.clamp(1, 240);
     }
-    if !THEMES.contains(&ui.color_theme.as_str()) {
+    if theme_info(&ui.color_theme).is_none() {
         warnings.push(format!(
             "config: unknown color_theme \"{}\" (use {})",
             ui.color_theme,
-            THEMES.join(", ")
+            theme_names().join(", ")
         ));
         ui.color_theme = Ui::default().color_theme;
     }
@@ -278,6 +282,32 @@ impl Config {
     }
 }
 
+/// Sets `[section] key = "value"` in the config file, keeping its comments and layout.
+/// A missing file is created from the commented defaults first.
+pub fn set_string(path: &Path, section: &str, key: &str, value: &str) -> Result<(), String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => default_file_text(),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|_| format!("{} is not valid TOML; fix it first", path.display()))?;
+    if !doc.contains_key(section) {
+        doc[section] = toml_edit::table();
+    }
+    let Some(table) = doc[section].as_table_like_mut() else {
+        return Err(format!("[{section}] in {} is not a table", path.display()));
+    };
+    table.insert(key, toml_edit::value(value));
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, doc.to_string()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
 /// A commented config file with every setting at its default.
 pub fn default_file_text() -> String {
     let mut out = String::from(
@@ -299,8 +329,8 @@ pub fn default_file_text() -> String {
          [ui]\n\
          fps = 60\n\
          show_spectrum = true\n\
-         # classic_blue, gruvbox, catppuccin, monochrome\n\
-         color_theme = \"classic_blue\"\n\
+         # THEME_LIST\n\
+         color_theme = \"DEFAULT_THEME\"\n\
          # unicode or ascii (use ascii in the legacy console with raster fonts)\n\
          charset = \"unicode\"\n\
          show_hidden = false\n\
@@ -308,7 +338,12 @@ pub fn default_file_text() -> String {
          [keybindings]\n\
          # Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,\n\
          # Ins, Left/Right/Up/Down, PgUp/PgDn, Home/End, F1-F24, with Ctrl+/Alt+/Shift+ prefixes.\n",
-    );
+    )
+    .replace(
+        "THEME_LIST",
+        &format!("{} (or press t in the player)", theme_names().join(", ")),
+    )
+    .replace("DEFAULT_THEME", DEFAULT_THEME);
     let defaults = Keymap::default();
     let line = |out: &mut String, action: Action, keys: Vec<KeyBinding>| {
         let quoted: Vec<String> = keys
@@ -389,7 +424,7 @@ seek_backward = ["Left", "1"]
             "[ui]\nfps = 1000\ncolor_theme = \"neon\"\ncharset = \"emoji\"\n[general]\naudio_buffer_ms = \"lots\"\n[extra]\n",
         );
         assert_eq!(config.ui.fps, 240);
-        assert_eq!(config.ui.color_theme, "classic_blue");
+        assert_eq!(config.ui.color_theme, DEFAULT_THEME);
         assert_eq!(config.ui.charset, "unicode");
         assert_eq!(config.general, General::default());
         assert_eq!(warnings.len(), 5, "{warnings:?}");
@@ -479,6 +514,39 @@ seek_backward = ["Left", "1"]
             keymap.lookup(Context::Playlist, &KeyBinding::plain('l')),
             Some(Action::NextTrack)
         );
+    }
+
+    #[test]
+    fn set_string_keeps_comments_and_creates_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cfg").join("config.toml");
+        set_string(&path, "ui", "color_theme", "nord").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("color_theme = \"nord\""), "{text}");
+        assert!(
+            text.contains("# mp3blaster-rs configuration"),
+            "defaults were not written"
+        );
+        assert_eq!(parse(&text).0.ui.color_theme, "nord");
+
+        std::fs::write(
+            &path,
+            "# my notes\n[general]\nreplaygain = \"track\" # loud\n",
+        )
+        .unwrap();
+        set_string(&path, "ui", "color_theme", "dracula").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("# my notes") && text.contains("# loud"),
+            "{text}"
+        );
+        let (config, warnings) = parse(&text);
+        assert!(warnings.is_empty());
+        assert_eq!(config.ui.color_theme, "dracula");
+        assert_eq!(config.general.replaygain, ReplayGainMode::Track);
+
+        std::fs::write(&path, "this = = broken").unwrap();
+        assert!(set_string(&path, "ui", "color_theme", "nord").is_err());
     }
 
     #[test]

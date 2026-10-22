@@ -51,6 +51,7 @@ pub enum Action {
     MoveUp,
     MoveDown,
     ShowLog,
+    ThemeSelector,
     Close,
     #[cfg(debug_assertions)]
     DebugPanic,
@@ -94,6 +95,7 @@ impl Action {
         Action::ToggleHidden,
         Action::Help,
         Action::ShowLog,
+        Action::ThemeSelector,
         Action::Close,
         Action::Quit,
     ];
@@ -138,6 +140,7 @@ impl Action {
             Action::MoveUp => "move_up",
             Action::MoveDown => "move_down",
             Action::ShowLog => "show_log",
+            Action::ThemeSelector => "theme_selector",
             Action::Close => "close",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "debug_panic",
@@ -189,6 +192,7 @@ impl Action {
             Action::MoveUp => "Move item up",
             Action::MoveDown => "Move item down",
             Action::ShowLog => "Message log",
+            Action::ThemeSelector => "Choose colour theme",
             Action::Close => "Close view / cancel",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "Crash on purpose (debug builds)",
@@ -377,6 +381,7 @@ impl Default for Keymap {
             (C::Global, CycleRepeat, &["r"]),
             (C::Global, ToggleGroupShuffle, &["z"]),
             (C::Global, ShowLog, &["L"]),
+            (C::Global, ThemeSelector, &["t"]),
             (C::Global, Close, &["Esc"]),
             (C::Global, Quit, &["q", "Ctrl+c"]),
             (C::Playlist, RenameGroup, &["R"]),

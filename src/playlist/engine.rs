@@ -91,11 +91,11 @@ impl Engine {
 
     /// The user started playback of `uid`: its group becomes the anchor for group scopes.
     pub fn anchor_at(&mut self, root: &Group, uid: u64) {
-        if let Some(r) = root.locate(uid) {
-            if r.group != self.anchor {
-                self.anchor = r.group;
-                self.played.clear();
-            }
+        if let Some(r) = root.locate(uid)
+            && r.group != self.anchor
+        {
+            self.anchor = r.group;
+            self.played.clear();
         }
     }
 
