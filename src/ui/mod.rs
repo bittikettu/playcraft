@@ -1,8 +1,11 @@
 //! The terminal user interface (ratatui + crossterm).
 
 pub mod app;
+mod editing;
 pub mod file_manager;
 pub mod keymap;
+mod playback;
+mod playlist_io;
 pub mod prompt;
 pub mod theme;
 mod views;
@@ -151,14 +154,53 @@ pub(crate) mod tests {
         let mut app = test_app(sample_root());
         // With repeat-all a playlist of missing files would otherwise cycle forever.
         app.repeat = crate::model::RepeatMode::RepeatAll;
-        app.play(crate::model::TrackRef::new(vec![], 0));
+        let first = app.root.tracks[0].uid;
+        app.play(first, true);
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !app.banner.as_ref().is_some_and(|b| b.text.contains("No playable tracks")) {
+        while !app.banner.as_ref().is_some_and(|b| b.text.contains("No playable")) {
             app.process_audio_events();
             assert!(Instant::now() < deadline, "never halted; banner: {:?}", app.banner);
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(app.root.tracks.iter().all(|t| t.missing));
+        assert!(app.root.track_refs().iter().all(|r| app.root.track(r).unwrap().missing));
+    }
+
+    #[test]
+    fn group_editing_round_trip() {
+        let mut app = test_app(sample_root());
+        // Create two groups in the root.
+        type_keys(&mut app, &["g", "S", "y", "n", "t", "h", "Enter"]);
+        type_keys(&mut app, &["F2", "J", "a", "z", "z", "Enter"]);
+        let names: Vec<_> = app.root.subgroups.iter().map(|g| g.name.clone()).collect();
+        assert_eq!(names, vec!["70s Prog Rock", "Synth", "Jazz"]);
+        assert_eq!(app.cursor, 2, "cursor follows the new group");
+
+        // Move "Jazz" up, rename it, then delete "Synth" after confirming.
+        type_keys(&mut app, &["K"]);
+        assert_eq!(app.root.subgroups[1].name, "Jazz");
+        type_keys(&mut app, &["R", "Ctrl+u", "B", "e", "b", "o", "p", "Enter"]);
+        assert_eq!(app.root.subgroups[1].name, "Bebop");
+        app.cursor = 2;
+        type_keys(&mut app, &["d", "n"]);
+        assert_eq!(app.root.subgroups.len(), 3, "answering no keeps the group");
+        type_keys(&mut app, &["d", "y"]);
+        let names: Vec<_> = app.root.subgroups.iter().map(|g| g.name.clone()).collect();
+        assert_eq!(names, vec!["70s Prog Rock", "Bebop"]);
+
+        // Tracks: move down and delete.
+        let first = app.root.tracks[0].uid;
+        app.cursor = 2; // first track row (after two groups)
+        type_keys(&mut app, &["J"]);
+        assert_eq!(app.root.tracks[1].uid, first);
+        type_keys(&mut app, &["d"]);
+        assert!(app.root.tracks.iter().all(|t| t.uid != first));
+        assert_eq!(app.root.tracks.len(), 2);
+
+        // Group shuffle flag shows in the listing.
+        app.cursor = 0;
+        type_keys(&mut app, &["Enter", "z", "Backspace"]);
+        assert!(app.root.subgroups[0].shuffle);
+        assert!(render(&mut app, 100, 20).contains("~shuffle"));
     }
 
     fn fixture(name: &str) -> std::path::PathBuf {

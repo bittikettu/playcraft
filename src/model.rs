@@ -109,8 +109,18 @@ pub struct TrackMetadata {
     pub replay_gain: ReplayGain,
 }
 
+static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// A process-unique track identity. Track positions shift when the playlist is edited;
+/// uids do not, so playback state refers to tracks by uid.
+pub fn next_uid() -> u64 {
+    NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Track {
+    #[serde(skip, default = "next_uid")]
+    pub uid: u64,
     pub path: PathBuf,
     /// Loaded lazily via the metadata worker pool.
     #[serde(skip)]
@@ -125,7 +135,7 @@ pub struct Track {
 
 impl Track {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Track { path: path.into(), metadata: None, missing: false, broken: false }
+        Track { uid: next_uid(), path: path.into(), metadata: None, missing: false, broken: false }
     }
 
     pub fn is_playable(&self) -> bool {
@@ -260,6 +270,33 @@ impl Group {
     /// Finds a track by file path, preferring the first match in playlist order.
     pub fn find_path(&self, path: &std::path::Path) -> Option<TrackRef> {
         self.track_refs().into_iter().find(|r| self.track(r).is_some_and(|t| t.path == path))
+    }
+
+    /// Where the track with `uid` currently is.
+    pub fn locate(&self, uid: u64) -> Option<TrackRef> {
+        fn search(g: &Group, uid: u64, path: &mut Vec<usize>) -> Option<TrackRef> {
+            if let Some(i) = g.tracks.iter().position(|t| t.uid == uid) {
+                return Some(TrackRef::new(path.clone(), i));
+            }
+            for (i, sub) in g.subgroups.iter().enumerate() {
+                path.push(i);
+                if let Some(found) = search(sub, uid, path) {
+                    return Some(found);
+                }
+                path.pop();
+            }
+            None
+        }
+        search(self, uid, &mut Vec::new())
+    }
+
+    pub fn track_by_uid(&self, uid: u64) -> Option<&Track> {
+        self.locate(uid).and_then(|r| self.track(&r))
+    }
+
+    pub fn track_by_uid_mut(&mut self, uid: u64) -> Option<&mut Track> {
+        let r = self.locate(uid)?;
+        self.track_mut(&r)
     }
 }
 

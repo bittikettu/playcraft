@@ -4,7 +4,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use super::{format_time, justify};
-use crate::model::TrackRef;
 use crate::ui::app::{App, Row};
 use crate::ui::keymap::{Action, Context};
 
@@ -87,10 +86,9 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
                 } else {
                     track.duration().map(|d| format!("[{}]", format_time(d))).unwrap_or_default()
                 };
-                let here = TrackRef::new(app.cwd.clone(), t);
                 let style = if !track.is_playable() {
                     theme.missing
-                } else if app.playing.as_ref() == Some(&here) {
+                } else if app.playing == Some(track.uid) {
                     theme.playing
                 } else {
                     theme.base

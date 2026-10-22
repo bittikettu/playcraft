@@ -22,7 +22,7 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect) {
         Line::from(vec![Span::styled(label.to_string(), theme.dim), Span::styled(value, theme.base)])
     };
 
-    let track = app.now.as_ref().and_then(|n| n.track.as_ref()).and_then(|r| app.root.track(r));
+    let track = app.now.as_ref().and_then(|n| n.track).and_then(|u| app.root.track_by_uid(u));
     let meta = track.and_then(|t| t.metadata.as_ref());
     let mut lines = Vec::new();
     match &app.now {
