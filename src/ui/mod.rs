@@ -281,6 +281,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn save_and_load_playlist_through_the_ui() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = test_app(sample_root());
+        app.fm = file_manager::FileManager::new(dir.path().to_path_buf());
+        // F4, type a relative name without extension: saved as .blst in the browsed folder.
+        type_keys(&mut app, &["F4", "Ctrl+u", "m", "i", "x", "Enter"]);
+        let saved = dir.path().join("mix.blst");
+        assert!(saved.exists(), "banner: {:?}", app.banner);
+
+        // Saving again under a different existing name asks first.
+        std::fs::write(dir.path().join("other.m3u8"), "#EXTM3U\n").unwrap();
+        type_keys(&mut app, &["F4", "Ctrl+u", "o", "t", "h", "e", "r", ".", "m", "3", "u", "8", "Enter"]);
+        assert!(app.prompt.as_ref().is_some_and(|p| p.is_confirm()));
+        type_keys(&mut app, &["y"]);
+        assert!(std::fs::read_to_string(dir.path().join("other.m3u8")).unwrap().contains("#EXTGRP:70s Prog Rock"));
+
+        // Load replaces the playlist; import adds it as a group.
+        let mut app = test_app(Group::new(0, "Root"));
+        app.load_playlist(&saved);
+        assert_eq!(app.root.total_tracks(), 4);
+        assert_eq!(app.root.subgroups[0].name, "70s Prog Rock");
+        app.import_playlist(&dir.path().join("other.m3u8"));
+        assert_eq!(app.root.subgroups.len(), 2);
+        assert_eq!(app.root.subgroups[1].name, "other");
+        assert_eq!(app.root.total_tracks(), 8);
+    }
+
+    #[test]
     fn navigating_into_a_group_and_back() {
         let mut app = test_app(sample_root());
         app.on_action(keymap::Action::Activate);

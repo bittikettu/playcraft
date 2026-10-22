@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use mp3blaster_rs::audio::{AudioConfig, AudioHandle};
-use mp3blaster_rs::ui::app::App;
-use mp3blaster_rs::{headless, library, log_ring, paths, ui};
+use mp3blaster_rs::ui::app::{App, BannerLevel};
+use mp3blaster_rs::{headless, library, log_ring, paths, playlist, ui};
 
 #[derive(Parser, Debug)]
 #[command(name = "mp3blaster-rs", version, about = "Terminal audio player in the spirit of MP3Blaster")]
@@ -44,11 +44,15 @@ fn main() -> anyhow::Result<()> {
         volume: cli.volume.map_or(0.8, |v| f32::from(v) / 100.0),
         ..AudioConfig::default()
     };
-    let tracks = library::expand_paths(&cli.paths);
     if cli.headless {
-        return headless::run(tracks, config);
+        return headless::run(library::expand_paths(&cli.paths), config);
     }
+    let startup = playlist::from_paths(&cli.paths);
     let audio = AudioHandle::spawn(config);
-    let mut app = App::new(audio, App::root_from_files(tracks));
+    let mut app = App::new(audio, startup.root);
+    app.playlist_path = startup.playlist_path;
+    if let Some(err) = startup.errors.first() {
+        app.banner(BannerLevel::Error, err.clone());
+    }
     ui::run(&mut app)
 }

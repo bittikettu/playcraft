@@ -100,6 +100,8 @@ pub struct App {
     pub banner: Option<Banner>,
     pub play_mode: PlayMode,
     pub repeat: RepeatMode,
+    /// Playlist file last loaded or saved (default for the save prompt).
+    pub playlist_path: Option<PathBuf>,
     pub quit: bool,
     pub(crate) failures: usize,
     pub(crate) engine: Engine,
@@ -134,6 +136,7 @@ impl App {
             banner: None,
             play_mode: PlayMode::default(),
             repeat: RepeatMode::default(),
+            playlist_path: None,
             quit: false,
             failures: 0,
             engine: Engine::new(None),
@@ -302,6 +305,8 @@ impl App {
             Action::NewGroup => {
                 self.prompt = Some(Prompt::new(PromptKind::NewGroup, "New group name: ", ""));
             }
+            Action::LoadPlaylist => self.open_file_manager(FmMode::PickPlaylist),
+            Action::SavePlaylist => self.start_save(),
             Action::RenameGroup => self.start_rename(),
             Action::Delete => self.delete_at_cursor(),
             Action::MoveUp => self.move_at_cursor(-1),
@@ -329,6 +334,7 @@ impl App {
             }
             PromptKind::NewGroup => self.create_group(answer),
             PromptKind::RenameGroup => self.rename_group(answer),
+            PromptKind::SavePlaylist => self.save_answer(answer),
             PromptKind::Confirm(confirm) => self.confirmed(confirm),
             other => log::debug!("unhandled prompt {other:?}"),
         }

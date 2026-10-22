@@ -67,12 +67,18 @@ pub fn collect_audio_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Expands command-line arguments: folders become their audio files, files pass through.
+/// Expands command-line arguments into a flat track list: folders become their audio files,
+/// playlists their entries, files pass through.
 pub fn expand_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for p in paths {
         if p.is_dir() {
             out.extend(collect_audio_files(p));
+        } else if fs_browser::is_playlist_file(p) {
+            match crate::playlist::flatten_file(p) {
+                Ok(tracks) => out.extend(tracks),
+                Err(e) => log::warn!("{}: {e}", p.display()),
+            }
         } else {
             out.push(p.clone());
         }
