@@ -1,6 +1,6 @@
 //! The native `.blst` format: the full group tree as versioned JSON.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,29 +28,25 @@ struct BlstGroup {
     subgroups: Vec<BlstGroup>,
 }
 
-fn to_blst(g: &Group, base: &Path) -> BlstGroup {
+fn to_blst(g: &Group, entry: &impl Fn(&Path) -> String) -> BlstGroup {
     BlstGroup {
         name: g.name.clone(),
         shuffle: g.shuffle,
-        tracks: g.tracks.iter().map(|t| entry_for(base, &t.path)).collect(),
-        subgroups: g.subgroups.iter().map(|s| to_blst(s, base)).collect(),
+        tracks: g.tracks.iter().map(|t| entry(&t.path)).collect(),
+        subgroups: g.subgroups.iter().map(|s| to_blst(s, entry)).collect(),
     }
 }
 
-fn from_blst(g: BlstGroup, base: &Path) -> Group {
+fn from_blst(g: BlstGroup, path: &impl Fn(&str) -> PathBuf) -> Group {
     Group {
         id: 0,
         name: g.name,
         shuffle: g.shuffle,
-        tracks: g
-            .tracks
-            .iter()
-            .map(|p| Track::new(resolve_entry(base, p)))
-            .collect(),
+        tracks: g.tracks.iter().map(|p| Track::new(path(p))).collect(),
         subgroups: g
             .subgroups
             .into_iter()
-            .map(|s| from_blst(s, base))
+            .map(|s| from_blst(s, path))
             .collect(),
     }
 }
@@ -70,27 +66,28 @@ pub fn parse(text: &str, base: &Path) -> Result<Group, PlaylistError> {
             file.version
         )));
     }
-    Ok(from_blst(file.root, base))
+    Ok(from_blst(file.root, &|p| resolve_entry(base, p)))
 }
 
 pub fn write(root: &Group, base: &Path) -> Result<String, PlaylistError> {
     let file = BlstFile {
         format: FORMAT.into(),
         version: VERSION,
-        root: to_blst(root, base),
+        root: to_blst(root, &|p| entry_for(base, p)),
     };
     serde_json::to_string_pretty(&file).map_err(|e| PlaylistError::Parse(e.to_string()))
 }
 
-/// Serialises a tree with absolute paths (used for the session file).
+/// Serialises a tree with paths stored verbatim (used for the session file).
 pub fn to_json_value(root: &Group) -> serde_json::Value {
-    serde_json::to_value(to_blst(root, Path::new(""))).unwrap_or(serde_json::Value::Null)
+    let tree = to_blst(root, &|p| p.to_string_lossy().into_owned());
+    serde_json::to_value(tree).unwrap_or(serde_json::Value::Null)
 }
 
 /// Inverse of `to_json_value`.
 pub fn from_json_value(value: serde_json::Value) -> Option<Group> {
     let g: BlstGroup = serde_json::from_value(value).ok()?;
-    let mut root = from_blst(g, Path::new(""));
+    let mut root = from_blst(g, &|p| PathBuf::from(p));
     root.renumber(0);
     Some(root)
 }

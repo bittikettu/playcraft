@@ -4,36 +4,93 @@ pub mod app;
 mod editing;
 pub mod file_manager;
 pub mod keymap;
+mod persistence;
 mod playback;
 mod playlist_io;
 pub mod prompt;
 pub mod theme;
 mod views;
 
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event};
 
+use crate::session::{self, CloseSignal};
 use app::App;
 use keymap::KeyBinding;
 
 /// How often to check for audio events while nothing is animating.
 const IDLE_POLL: Duration = Duration::from_millis(100);
+/// How often the session is saved (only when it changed).
+const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Saves the session periodically, on quit and when the console window is closed.
+pub struct Autosave {
+    path: PathBuf,
+    last_json: String,
+    last_check: Instant,
+    close: Arc<CloseSignal>,
+}
+
+impl Autosave {
+    pub fn new(path: PathBuf) -> Self {
+        Autosave {
+            path,
+            last_json: String::new(),
+            last_check: Instant::now(),
+            close: CloseSignal::install(),
+        }
+    }
+
+    pub fn save(&mut self, app: &App) {
+        let json = app.snapshot().to_json();
+        if json == self.last_json {
+            return;
+        }
+        match session::save_json(&self.path, &json) {
+            Ok(()) => self.last_json = json,
+            Err(e) => log::warn!("cannot save session {}: {e}", self.path.display()),
+        }
+    }
+
+    fn tick(&mut self, app: &mut App) {
+        if self.close.requested() {
+            self.save(app);
+            self.close.complete();
+            app.quit = true;
+        } else if self.last_check.elapsed() >= AUTOSAVE_INTERVAL {
+            self.last_check = Instant::now();
+            self.save(app);
+        }
+    }
+}
 
 /// Runs the TUI until the user quits. The terminal is restored on exit and on panic.
-pub fn run(app: &mut App) -> anyhow::Result<()> {
+pub fn run(app: &mut App, mut autosave: Option<Autosave>) -> anyhow::Result<()> {
     let mut terminal = ratatui::try_init()?;
-    let result = event_loop(&mut terminal, app);
+    let result = event_loop(&mut terminal, app, autosave.as_mut());
     ratatui::restore();
+    if let Some(autosave) = autosave.as_mut() {
+        autosave.save(app);
+    }
     result
 }
 
-fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<()> {
+fn event_loop(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    mut autosave: Option<&mut Autosave>,
+) -> anyhow::Result<()> {
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(app.fps.clamp(1, 240)));
     let mut dirty = true;
     let mut last_draw = Instant::now();
     while !app.quit {
+        if let Some(autosave) = autosave.as_deref_mut() {
+            autosave.tick(app);
+        }
         dirty |= app.process_audio_events();
         dirty |= app.process_background();
         dirty |= app.tick();
@@ -396,6 +453,45 @@ pub(crate) mod tests {
             "ascii charset must not draw box characters"
         );
         assert!(screen.contains("[F10] Help"));
+    }
+
+    #[test]
+    fn session_round_trip_restores_playlist_and_resumes_paused() {
+        let mut root = sample_root();
+        root.subgroups[0].tracks[0].path = fixture("sine_48k_stereo.flac");
+        root.subgroups[0].shuffle = true;
+        let mut app = test_app(root);
+        let uid = app.root.subgroups[0].tracks[0].uid;
+        app.last_played = Some(uid);
+        app.cwd = vec![0];
+        app.repeat = crate::model::RepeatMode::RepeatAll;
+        app.audio.shared().set_volume(0.35);
+        let json = app.snapshot().to_json();
+
+        let session: crate::session::Session = serde_json::from_str(&json).unwrap();
+        let mut restored = test_app(Group::new(0, "Root"));
+        restored.restore(session, false, true, true);
+        assert_eq!(restored.root.total_tracks(), 4);
+        assert!(restored.root.subgroups[0].shuffle);
+        assert_eq!(restored.cwd, vec![0]);
+        assert_eq!(restored.repeat, crate::model::RepeatMode::RepeatAll);
+        assert!((restored.audio.shared().volume() - 0.35).abs() < 1e-6);
+        let last = restored
+            .last_played
+            .and_then(|u| restored.root.track_by_uid(u))
+            .unwrap();
+        assert_eq!(last.path, fixture("sine_48k_stereo.flac"));
+
+        // The resumed track starts paused.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while restored.status() != crate::model::PlaybackStatus::Paused
+            || restored.playing.is_none()
+        {
+            restored.process_audio_events();
+            assert!(Instant::now() < deadline, "status {:?}", restored.status());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(restored.playing, restored.last_played);
     }
 
     #[test]

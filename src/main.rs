@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use mp3blaster_rs::audio::{AudioConfig, AudioHandle};
 use mp3blaster_rs::ui::app::{App, BannerLevel};
-use mp3blaster_rs::{config, headless, library, log_ring, paths, playlist, ui};
+use mp3blaster_rs::{config, headless, library, log_ring, paths, playlist, session, ui};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -38,6 +38,10 @@ struct Cli {
     /// Write a commented default config file (if none exists) and exit.
     #[arg(long)]
     write_default_config: bool,
+
+    /// Do not resume the last track and position from the previous session.
+    #[arg(long)]
+    no_resume: bool,
 }
 
 fn write_default_config(path: Option<PathBuf>) -> anyhow::Result<()> {
@@ -97,5 +101,13 @@ fn main() -> anyhow::Result<()> {
         };
         app.banner(BannerLevel::Warning, format!("{first}{more}"));
     }
-    ui::run(&mut app)
+
+    let session_path = paths::session_file();
+    if let Some(saved) = session_path.as_deref().and_then(session::load) {
+        // Paths on the command line replace the saved playlist; settings are still restored.
+        let keep_playlist = !cli.paths.is_empty();
+        let resume = cfg.general.resume_on_startup && !cli.no_resume && !keep_playlist;
+        app.restore(saved, keep_playlist, resume, cli.volume.is_none());
+    }
+    ui::run(&mut app, session_path.map(ui::Autosave::new))
 }

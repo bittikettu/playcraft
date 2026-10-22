@@ -9,4 +9,5 @@ pub mod model;
 pub mod paths;
 pub mod platform;
 pub mod playlist;
+pub mod session;
 pub mod ui;
