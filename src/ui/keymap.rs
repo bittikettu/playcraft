@@ -204,7 +204,7 @@ impl Action {
             Action::ThemeSelector => "Choose colour theme",
             Action::SpectrumFullscreen => "Fullscreen spectrum analyser",
             Action::SpectrumLayout => "Spectrum: wide / in panel / off",
-            Action::VisualizerStyle => "Visualizer: bars / Matrix rain of the file's bytes",
+            Action::VisualizerStyle => "Visualizer: bars / Matrix rain / disk defragmenter",
             Action::Close => "Close view / cancel",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "Crash on purpose (debug builds)",

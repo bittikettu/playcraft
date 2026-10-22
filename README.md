@@ -37,6 +37,7 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
   - colour gradient, falling peak markers and a frequency axis;
   - `f` switches to a fullscreen visualiser; `w` cycles between the wide strip, inside Now Playing, and off.
   - `v` switches to **Matrix rain** of the playing file's own bytes, shown as hex digits from the part of the file being played. Each column follows a spectrum band: louder frequencies make faster, longer streams, over faint bars drawn from the same digits. Fullscreen shows the file offset being read.
+  - Press `v` again for the **Disk Defragmenter**, in the style of the Windows 98 tool. Each song gets its own fragmented "disk", and defragmenting keeps pace with playback. Loud passages make the read head grab more clusters. When the song ends, the disk is fully defragmented: "Defragmentation of Drive D: is complete." The drive letter is the one your music file is on.
 - **ReplayGain** (track or album, limited to avoid clipping) and logarithmic, click-free volume.
 - **Audio device handling:** device unplugged → playback pauses with a banner and resumes when the device returns. Windows default device changes → playback follows.
 - **Sessions:** the playlist, track, position, volume and modes are restored on the next start. They are saved every 30 s, on quit, and when the console window is closed.
@@ -92,7 +93,7 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 | Help / message log | `?` / `L` | |
 | Colour theme picker | | `t` |
 | Fullscreen spectrum / spectrum layout | | `f` / `w` |
-| Bars / Matrix rain visualiser | | `v` |
+| Visualiser: bars / Matrix rain / defragmenter | | `v` |
 | Quit | `q` | Ctrl+c |
 
 **Playlist view:**
@@ -134,7 +135,7 @@ output_device = "Arctis"    # part of a device name; empty follows the Windows d
 color_theme = "dracula"     # or tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome
 charset = "ascii"           # for the legacy console with raster fonts
 spectrum_layout = "wide"    # wide (full-width strip) or pane (inside Now Playing)
-visualizer = "matrix"       # bars, or matrix: digital rain of the file's bytes
+visualizer = "defrag"       # bars, matrix (rain of the file's bytes) or defrag
 
 [keybindings]
 play_pause = ["Space", "c"]

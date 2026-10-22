@@ -642,6 +642,55 @@ pub(crate) mod tests {
         );
 
         type_keys(&mut app, &["v"]);
+        assert_eq!(app.visualizer, app::Visualizer::Defrag);
+    }
+
+    #[test]
+    fn defrag_visualizer_finishes_with_the_song() {
+        let mut app = test_app(sample_root());
+        app.now = Some(app::NowPlaying {
+            track: None,
+            path: std::path::PathBuf::from(r"D:\Music\Pink Floyd - Money.mp3"),
+            info: crate::audio::StreamInfo {
+                codec: "mp3".into(),
+                sample_rate: 44_100,
+                channels: 2,
+            },
+            duration: Some(Duration::from_secs(100)),
+        });
+        type_keys(&mut app, &["v", "v", "f"]);
+        assert_eq!(app.visualizer, app::Visualizer::Defrag);
+        let shared = app.audio.shared().clone();
+
+        shared.set_position(Duration::ZERO);
+        render(&mut app, 100, 30);
+        let screen = render(&mut app, 100, 30);
+        println!("{screen}");
+        assert!(screen.contains("Defragmenting Drive"), "title missing");
+        assert!(screen.contains("0% complete"));
+        assert!(
+            screen.contains("Fragmented") && screen.contains("Free space"),
+            "legend missing"
+        );
+        assert!(!app.defrag.is_complete());
+
+        shared.set_position(Duration::from_secs(50));
+        render(&mut app, 100, 30);
+        assert_eq!(app.defrag.percent(), 50);
+        assert!(render(&mut app, 100, 30).contains("50% complete"));
+
+        shared.set_position(Duration::from_secs(100));
+        render(&mut app, 100, 30);
+        let screen = render(&mut app, 100, 30);
+        println!("{screen}");
+        assert!(app.defrag.is_complete());
+        assert!(screen.contains("is complete"));
+
+        // The wide strip shows the same defragmenter.
+        type_keys(&mut app, &["f"]);
+        assert!(render(&mut app, 120, 34).contains("complete"));
+        // v cycles back to the bars.
+        type_keys(&mut app, &["v"]);
         assert_eq!(app.visualizer, app::Visualizer::Bars);
     }
 

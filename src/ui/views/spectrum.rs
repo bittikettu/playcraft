@@ -220,6 +220,10 @@ fn draw_bars(f: &mut Frame<'_>, app: &mut App, inner: Rect) {
     }
     let geo = Geometry::wide(width);
     app.spectrum.set_band_count(geo.bands);
+    if app.visualizer == Visualizer::Defrag {
+        super::defrag::draw(f, app, inner);
+        return;
+    }
     if app.visualizer == Visualizer::Matrix {
         app.rain.resize(width, height);
         f.render_widget(Paragraph::new(matrix_lines(app)), inner);
@@ -236,11 +240,15 @@ fn draw_bars(f: &mut Frame<'_>, app: &mut App, inner: Rect) {
 
 /// The full-width strip under the playlist and Now Playing panes.
 pub fn draw_strip(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let title = match app.visualizer {
+        Visualizer::Defrag => super::defrag::status(app),
+        _ => " Spectrum ".to_string(),
+    };
     let block = Block::bordered()
         .border_set(app.symbols.border)
         .border_style(app.theme.border)
         .style(app.theme.base)
-        .title(Line::styled(" Spectrum ", app.theme.title))
+        .title(Line::styled(title, app.theme.title))
         .title(Line::styled(hint(app), app.theme.dim).right_aligned());
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -276,12 +284,26 @@ pub fn draw_fullscreen(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         ),
         _ => format!(" {key}/Esc: back "),
     };
-    let title_room = (area.width as usize).saturating_sub(back.len() + 4);
-    let title = truncate(
-        now.as_deref().unwrap_or(" Nothing playing "),
-        title_room,
-        app.symbols.ellipsis,
-    );
+    let (title, back) = if app.visualizer == Visualizer::Defrag {
+        // Defrag: the defragmenter status on the left, the track next to the key hint.
+        let status = super::defrag::status(app);
+        let room = (area.width as usize).saturating_sub(status.len() + back.len() + 6);
+        let track = truncate(now.as_deref().unwrap_or(""), room, app.symbols.ellipsis);
+        let right = if track.trim().is_empty() {
+            back
+        } else {
+            format!("{track}·{back}")
+        };
+        (status, right)
+    } else {
+        let title_room = (area.width as usize).saturating_sub(back.len() + 4);
+        let title = truncate(
+            now.as_deref().unwrap_or(" Nothing playing "),
+            title_room,
+            app.symbols.ellipsis,
+        );
+        (title, back)
+    };
     let block = Block::bordered()
         .border_set(app.symbols.border)
         .border_style(app.theme.border)

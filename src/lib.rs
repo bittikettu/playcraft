@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod config;
+pub mod defrag;
 pub mod headless;
 pub mod library;
 pub mod log_ring;

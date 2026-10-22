@@ -11,6 +11,7 @@ use crossbeam_channel::Receiver;
 
 use crate::audio::{AudioCommand, AudioHandle, StreamInfo};
 use crate::config::{Config, ReplayGainMode};
+use crate::defrag::Defrag;
 use crate::library::scanner::MetadataScanner;
 use crate::matrix::MatrixRain;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
@@ -53,13 +54,16 @@ pub enum Visualizer {
     Bars,
     /// Matrix-style digital rain of the playing file's bytes, driven by the spectrum.
     Matrix,
+    /// Windows 98-style disk defragmenter; fully defragmented when the song ends.
+    Defrag,
 }
 
 impl Visualizer {
     pub fn toggle(self) -> Self {
         match self {
             Visualizer::Bars => Visualizer::Matrix,
-            Visualizer::Matrix => Visualizer::Bars,
+            Visualizer::Matrix => Visualizer::Defrag,
+            Visualizer::Defrag => Visualizer::Bars,
         }
     }
 
@@ -67,6 +71,7 @@ impl Visualizer {
         match self {
             Visualizer::Bars => "spectrum bars",
             Visualizer::Matrix => "Matrix rain of the file's bytes",
+            Visualizer::Defrag => "disk defragmenter",
         }
     }
 }
@@ -177,6 +182,8 @@ pub struct App {
     pub visualizer: Visualizer,
     /// Digital rain made of the playing file's bytes (the Matrix visualizer).
     pub rain: MatrixRain,
+    /// The disk being defragmented (the Defrag visualizer).
+    pub defrag: Defrag,
     /// View to return to when the fullscreen visualizer closes.
     pub(crate) view_before_visualizer: View,
     pub spectrum: SpectrumAnalyzer,
@@ -222,6 +229,7 @@ impl App {
             spectrum_layout: SpectrumLayout::Wide,
             visualizer: Visualizer::Bars,
             rain: MatrixRain::default(),
+            defrag: Defrag::new(),
             view_before_visualizer: View::Playlist,
             spectrum: SpectrumAnalyzer::new(),
             last_spectrum_update: Instant::now(),
@@ -298,10 +306,10 @@ impl App {
             (true, "pane") => SpectrumLayout::Pane,
             _ => SpectrumLayout::Wide,
         };
-        self.visualizer = if config.ui.visualizer == "matrix" {
-            Visualizer::Matrix
-        } else {
-            Visualizer::Bars
+        self.visualizer = match config.ui.visualizer.as_str() {
+            "matrix" => Visualizer::Matrix,
+            "defrag" => Visualizer::Defrag,
+            _ => Visualizer::Bars,
         };
         self.replaygain = config.general.replaygain;
         self.audio

@@ -57,7 +57,7 @@ pub struct Ui {
     pub show_spectrum: bool,
     /// `wide`: a full-width strip under the playlist; `pane`: inside Now Playing.
     pub spectrum_layout: String,
-    /// `bars` or `matrix` (digital rain made of the playing file's bytes).
+    /// `bars`, `matrix` (digital rain of the playing file's bytes) or `defrag`.
     pub visualizer: String,
     pub color_theme: String,
     pub charset: String,
@@ -178,9 +178,9 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
         ));
         ui.color_theme = Ui::default().color_theme;
     }
-    if !["bars", "matrix"].contains(&ui.visualizer.as_str()) {
+    if !["bars", "matrix", "defrag"].contains(&ui.visualizer.as_str()) {
         warnings.push(format!(
-            "config: visualizer must be \"bars\" or \"matrix\", not \"{}\"",
+            "config: visualizer must be \"bars\", \"matrix\" or \"defrag\", not \"{}\"",
             ui.visualizer
         ));
         ui.visualizer = Ui::default().visualizer;
@@ -351,7 +351,8 @@ pub fn default_file_text() -> String {
          show_spectrum = true\n\
          # wide (full-width strip under the playlist) or pane (inside Now Playing); f = fullscreen\n\
          spectrum_layout = \"wide\"\n\
-         # bars, or matrix: digital rain made of the playing file's own bytes (v toggles)\n\
+         # bars, matrix (digital rain of the playing file's own bytes) or defrag\n\
+         # (a disk defragmenter that finishes with the song); v cycles them\n\
          visualizer = \"bars\"\n\
          # THEME_LIST\n\
          color_theme = \"DEFAULT_THEME\"\n\

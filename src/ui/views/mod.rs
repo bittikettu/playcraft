@@ -1,6 +1,7 @@
 //! Rendering. The layout follows spec §5: playlist (left), Now Playing (right),
 //! progress bar and a contextual key/prompt bar.
 
+mod defrag;
 mod file_manager;
 mod help;
 mod log;
