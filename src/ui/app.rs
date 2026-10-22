@@ -14,6 +14,7 @@ use crate::config::{Config, ReplayGainMode};
 use crate::library::scanner::MetadataScanner;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
 use crate::playlist::engine::Engine;
+use crate::spectrum::SpectrumAnalyzer;
 
 use super::file_manager::{FileManager, FmMode};
 use super::keymap::{Action, Context, KeyBinding, Keymap};
@@ -47,6 +48,7 @@ pub enum View {
 pub enum Overlay {
     None,
     Help { scroll: u16 },
+    Log { scroll: u16 },
 }
 
 /// A row of the playlist view: subgroups are listed before tracks.
@@ -106,6 +108,8 @@ pub struct App {
     /// Live search filter for the playlist view.
     pub filter: Option<String>,
     pub show_spectrum: bool,
+    pub spectrum: SpectrumAnalyzer,
+    last_spectrum_update: Instant,
     pub replaygain: ReplayGainMode,
     pub quit: bool,
     pub(crate) failures: usize,
@@ -144,6 +148,8 @@ impl App {
             playlist_path: None,
             filter: None,
             show_spectrum: true,
+            spectrum: SpectrumAnalyzer::new(),
+            last_spectrum_update: Instant::now(),
             replaygain: ReplayGainMode::Off,
             quit: false,
             failures: 0,
@@ -170,6 +176,7 @@ impl App {
     /// Whether the screen changes on its own (progress bar, spectrum).
     pub fn is_animating(&self) -> bool {
         self.status() == PlaybackStatus::Playing
+            || (self.show_spectrum && self.spectrum.is_active())
     }
 
     pub fn current_group(&self) -> &Group {
@@ -213,6 +220,8 @@ impl App {
         self.fps = config.ui.fps;
         self.show_spectrum = config.ui.show_spectrum;
         self.replaygain = config.general.replaygain;
+        self.audio
+            .send(AudioCommand::SetReplayGain(config.general.replaygain));
         self.fm.show_hidden = config.ui.show_hidden;
         self.fm.go_to(
             crate::library::fs_browser::Location::Dir(config.music_dir()),
@@ -265,6 +274,33 @@ impl App {
         false
     }
 
+    /// Feeds the spectrum analyser from the audio tap. Call once per loop iteration.
+    pub fn update_spectrum(&mut self) {
+        if let Some(tap) = self.audio.take_spectrum_tap() {
+            self.spectrum
+                .set_tap(tap, self.audio.shared().device_rate());
+        }
+        let dt = self.last_spectrum_update.elapsed();
+        self.last_spectrum_update = Instant::now();
+        if self.show_spectrum {
+            self.spectrum.update(dt);
+        }
+    }
+
+    /// Playback state for this frame, including the spectrum (spec §4 `AudioTelemetry`).
+    pub fn telemetry(&self) -> crate::audio::AudioTelemetry {
+        let mut t = crate::audio::AudioTelemetry::from_shared(self.audio.shared());
+        t.spectrum_bins = self.spectrum.bands();
+        if let Some(meta) = self
+            .playing
+            .and_then(|u| self.root.track_by_uid(u))
+            .and_then(|t| t.metadata.as_ref())
+        {
+            t.current_bitrate = meta.bitrate_kbps;
+        }
+        t
+    }
+
     pub fn is_scanning(&self) -> bool {
         !self.scans.is_empty() || self.scanner.backlog() > 0
     }
@@ -308,26 +344,41 @@ impl App {
         let Some(action) = self.keymap.lookup(self.context(), &key) else {
             return;
         };
-        if let Overlay::Help { scroll } = self.overlay {
-            let scroll = match action {
-                Action::CursorUp => scroll.saturating_sub(1),
-                Action::CursorDown => scroll.saturating_add(1),
-                Action::PageUp => scroll.saturating_sub(10),
-                Action::PageDown => scroll.saturating_add(10),
-                Action::Home => 0,
-                Action::Close | Action::Help | Action::Quit | Action::Activate | Action::Back => {
-                    self.overlay = Overlay::None;
-                    return;
-                }
-                _ => {
-                    self.on_action(action);
-                    return;
-                }
-            };
-            self.overlay = Overlay::Help { scroll };
-            return;
-        }
-        self.on_action(action);
+        let (scroll, is_log) = match self.overlay {
+            Overlay::None => return self.on_action(action),
+            Overlay::Help { scroll } => (scroll, false),
+            // The log scrolls up from its newest line, so "up" means older.
+            Overlay::Log { scroll } => (scroll, true),
+        };
+        let (back, forward) = if is_log {
+            (Action::CursorDown, Action::CursorUp)
+        } else {
+            (Action::CursorUp, Action::CursorDown)
+        };
+        let scroll = match action {
+            a if a == back => scroll.saturating_sub(1),
+            a if a == forward => scroll.saturating_add(1),
+            Action::PageUp if is_log => scroll.saturating_add(10),
+            Action::PageDown if is_log => scroll.saturating_sub(10),
+            Action::PageUp => scroll.saturating_sub(10),
+            Action::PageDown => scroll.saturating_add(10),
+            Action::Home | Action::End => 0,
+            Action::Close
+            | Action::Help
+            | Action::ShowLog
+            | Action::Quit
+            | Action::Activate
+            | Action::Back => {
+                self.overlay = Overlay::None;
+                return;
+            }
+            _ => return self.on_action(action),
+        };
+        self.overlay = if is_log {
+            Overlay::Log { scroll }
+        } else {
+            Overlay::Help { scroll }
+        };
     }
 
     pub fn on_action(&mut self, action: Action) {
@@ -386,6 +437,7 @@ impl App {
                 self.prompt = Some(Prompt::new(PromptKind::Search, "Search: ", current));
             }
             Action::Help => self.overlay = Overlay::Help { scroll: 0 },
+            Action::ShowLog => self.overlay = Overlay::Log { scroll: 0 },
             Action::Close => {
                 if self.filter.take().is_none() {
                     self.banner = None;

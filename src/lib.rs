@@ -10,4 +10,5 @@ pub mod paths;
 pub mod platform;
 pub mod playlist;
 pub mod session;
+pub mod spectrum;
 pub mod ui;

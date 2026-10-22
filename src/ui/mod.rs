@@ -91,6 +91,7 @@ fn event_loop(
         if let Some(autosave) = autosave.as_deref_mut() {
             autosave.tick(app);
         }
+        app.update_spectrum();
         dirty |= app.process_audio_events();
         dirty |= app.process_background();
         dirty |= app.tick();
@@ -492,6 +493,31 @@ pub(crate) mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(restored.playing, restored.last_played);
+    }
+
+    #[test]
+    fn spectrum_bars_and_log_overlay_render() {
+        let mut app = test_app(sample_root());
+        let tone: Vec<f32> = (0..4096)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        app.spectrum.push_samples(&tone);
+        app.spectrum.update(Duration::ZERO);
+        let screen = render(&mut app, 100, 30);
+        println!("{screen}");
+        assert!(screen.contains('█'), "no full spectrum bar drawn");
+        assert!(
+            app.is_animating(),
+            "falling bars keep the display animating"
+        );
+
+        log::warn!("spectrum test warning");
+        type_keys(&mut app, &["L"]);
+        let screen = render(&mut app, 100, 30);
+        assert!(screen.contains("Message log"));
+        assert!(screen.contains("spectrum test warning"));
+        type_keys(&mut app, &["Esc"]);
+        assert_eq!(app.overlay, app::Overlay::None);
     }
 
     #[test]

@@ -80,6 +80,7 @@ fn main() -> anyhow::Result<()> {
         output_device: cli.device.clone().or_else(|| cfg.output_device()),
         buffer_ms: cfg.general.audio_buffer_ms,
         gapless: cfg.general.gapless_playback,
+        replaygain: cfg.general.replaygain,
         volume: cli.volume.map_or(0.8, |v| f32::from(v) / 100.0),
     };
 

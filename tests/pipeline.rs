@@ -10,6 +10,7 @@ use mp3blaster_rs::audio::decoder::Decoder;
 use mp3blaster_rs::audio::output::DeviceFormat;
 use mp3blaster_rs::audio::render::Renderer;
 use mp3blaster_rs::audio::{AudioCommand, AudioConfig, AudioEvent, AudioHandle};
+use mp3blaster_rs::config::ReplayGainMode;
 use mp3blaster_rs::model::PlaybackStatus;
 
 /// Frames the renderer fades in over at stream start / after a flush.
@@ -40,6 +41,16 @@ struct Harness {
 
 impl Harness {
     fn new(rate: u32) -> Self {
+        Self::with_config(
+            rate,
+            AudioConfig {
+                volume: 1.0,
+                ..AudioConfig::default()
+            },
+        )
+    }
+
+    fn with_config(rate: u32, config: AudioConfig) -> Self {
         let (tx, rx) = unbounded();
         let backend = ManualBackend {
             format: DeviceFormat {
@@ -47,10 +58,6 @@ impl Harness {
                 channels: 2,
             },
             renderers: tx,
-        };
-        let config = AudioConfig {
-            volume: 1.0,
-            ..AudioConfig::default()
         };
         let handle = AudioHandle::spawn_with_backend(config, Box::new(backend));
         let renderer = rx.recv_timeout(Duration::from_secs(5)).expect("renderer");
@@ -166,6 +173,33 @@ fn gapless_pair_renders_identically_to_the_whole_file() {
         "rendered audio differs at sample {mismatch:?}"
     );
     assert_eq!(h.handle.shared().status(), PlaybackStatus::Stopped);
+}
+
+#[test]
+fn replaygain_scales_tagged_tracks() {
+    let peak = |mode| {
+        let mut h = Harness::with_config(
+            48_000,
+            AudioConfig {
+                volume: 1.0,
+                replaygain: mode,
+                ..AudioConfig::default()
+            },
+        );
+        h.handle
+            .send(AudioCommand::LoadAndPlay(fixture("tagged.flac")));
+        let out = h.pull_until_finished(Duration::from_secs(20));
+        out.iter().fold(0f32, |m, s| m.max(s.abs()))
+    };
+    let off = peak(ReplayGainMode::Off);
+    let track = peak(ReplayGainMode::Track);
+    // The fixture is tagged -6.50 dB with peak 0.5, so the peak limit (x2) does not apply.
+    let expected = 10f32.powf(-6.5 / 20.0);
+    assert!(
+        (track / off - expected).abs() < 0.01,
+        "gain ratio {} (expected {expected})",
+        track / off
+    );
 }
 
 #[test]

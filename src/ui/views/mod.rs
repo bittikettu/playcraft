@@ -3,6 +3,7 @@
 
 mod file_manager;
 mod help;
+mod log;
 mod now_playing;
 mod playlist;
 mod progress;
@@ -54,8 +55,10 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     progress::draw(f, app, progress_area, compact);
     status_bar::draw(f, app, bar_area, compact);
 
-    if let Overlay::Help { scroll } = app.overlay {
-        help::draw(f, app, centered(area, 80, 85), scroll);
+    match app.overlay {
+        Overlay::Help { scroll } => help::draw(f, app, centered(area, 80, 85), scroll),
+        Overlay::Log { scroll } => log::draw(f, app, centered(area, 90, 85), scroll),
+        Overlay::None => {}
     }
 }
 

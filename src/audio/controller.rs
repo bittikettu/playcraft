@@ -22,6 +22,7 @@ use super::output::{self, DeviceFormat, OutputError, StreamFault};
 use super::render::{self, Renderer};
 use super::resample::Resampler;
 use super::shared::Shared;
+use crate::config::ReplayGainMode;
 use crate::model::PlaybackStatus;
 
 /// Open the next queued track this long before the current one ends (spec §6.2).
@@ -45,6 +46,7 @@ pub enum AudioCommand {
     SeekAbsolute(Duration),
     /// 0.0 to 1.0.
     SetVolume(f32),
+    SetReplayGain(ReplayGainMode),
     Shutdown,
 }
 
@@ -84,6 +86,7 @@ pub struct AudioConfig {
     pub buffer_ms: u32,
     pub gapless: bool,
     pub volume: f32,
+    pub replaygain: ReplayGainMode,
 }
 
 impl Default for AudioConfig {
@@ -93,7 +96,32 @@ impl Default for AudioConfig {
             buffer_ms: 150,
             gapless: true,
             volume: 0.8,
+            replaygain: ReplayGainMode::Off,
         }
+    }
+}
+
+/// Linear gain for `path` under `mode`, limited so the tagged peak does not clip.
+pub fn replay_gain_factor(path: &std::path::Path, mode: ReplayGainMode) -> f32 {
+    if mode == ReplayGainMode::Off {
+        return 1.0;
+    }
+    let rg = crate::library::scanner::read_replay_gain(path);
+    let (gain, peak) = match mode {
+        ReplayGainMode::Album => (
+            rg.album_gain_db.or(rg.track_gain_db),
+            rg.album_peak.or(rg.track_peak),
+        ),
+        _ => (
+            rg.track_gain_db.or(rg.album_gain_db),
+            rg.track_peak.or(rg.album_peak),
+        ),
+    };
+    let Some(db) = gain else { return 1.0 };
+    let linear = 10f32.powf(db / 20.0);
+    match peak.filter(|&p| p > 0.0) {
+        Some(p) => linear.min(1.0 / p),
+        None => linear,
     }
 }
 
@@ -292,6 +320,8 @@ struct Segment {
 struct Current {
     decoder: Decoder,
     info: Arc<TrackInfo>,
+    /// ReplayGain factor applied to this track's samples.
+    gain: f32,
 }
 
 fn track_info(decoder: &Decoder) -> Arc<TrackInfo> {
@@ -468,6 +498,12 @@ impl Controller {
             }
             AudioCommand::SeekAbsolute(target) => self.seek_to(target),
             AudioCommand::SetVolume(volume) => self.shared.set_volume(volume),
+            AudioCommand::SetReplayGain(mode) => {
+                self.config.replaygain = mode;
+                if let Some(cur) = self.current.as_mut() {
+                    cur.gain = replay_gain_factor(&cur.info.path, mode);
+                }
+            }
             AudioCommand::Shutdown => self.shutdown = true,
         }
     }
@@ -504,7 +540,12 @@ impl Controller {
             track: info.clone(),
             announced: false,
         });
-        self.current = Some(Current { decoder, info });
+        let gain = replay_gain_factor(decoder.path(), self.config.replaygain);
+        self.current = Some(Current {
+            decoder,
+            info,
+            gain,
+        });
         if self.sink.is_none() {
             self.retry_at = Some(Instant::now());
             self.retry_device_if_due();
@@ -686,6 +727,10 @@ impl Controller {
             Ok(Some(samples)) => {
                 self.scratch.clear();
                 self.scratch.extend_from_slice(samples);
+                if cur.gain != 1.0 {
+                    let gain = cur.gain;
+                    self.scratch.iter_mut().for_each(|s| *s *= gain);
+                }
                 Some(cur.decoder.format())
             }
             Ok(None) => None,
@@ -782,7 +827,12 @@ impl Controller {
             track: info.clone(),
             announced: false,
         });
-        self.current = Some(Current { decoder, info });
+        let gain = replay_gain_factor(decoder.path(), self.config.replaygain);
+        self.current = Some(Current {
+            decoder,
+            info,
+            gain,
+        });
         self.eof = false;
     }
 

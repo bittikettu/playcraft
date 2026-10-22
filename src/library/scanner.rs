@@ -11,6 +11,13 @@ use lofty::tag::Tag;
 
 use crate::model::{ReplayGain, TrackMetadata};
 
+/// Reads only the ReplayGain values (all `None` when unavailable). Never panics.
+pub fn read_replay_gain(path: &Path) -> ReplayGain {
+    read_metadata(path)
+        .map(|m| m.replay_gain)
+        .unwrap_or_default()
+}
+
 /// Reads tags and stream properties. Returns `None` for unreadable files; never panics.
 pub fn read_metadata(path: &Path) -> Option<TrackMetadata> {
     match catch_unwind(AssertUnwindSafe(|| read_metadata_inner(path))) {
