@@ -1,12 +1,19 @@
 //! Application state and input handling for the TUI.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::audio::{AudioCommand, AudioEvent, AudioHandle, StreamInfo};
-use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackRef};
+use crossbeam_channel::Receiver;
 
+use crate::audio::{AudioCommand, AudioEvent, AudioHandle, StreamInfo};
+use crate::library::fs_browser::{self, EntryKind};
+use crate::library::scanner::MetadataScanner;
+use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata, TrackRef};
+
+use super::file_manager::{FileManager, FmMode};
 use super::keymap::{Action, Context, KeyBinding, Keymap};
+use super::prompt::{Prompt, PromptKind, PromptResult};
 use super::theme::{Symbols, Theme};
 
 const VOLUME_STEP: f32 = 0.05;
@@ -24,6 +31,12 @@ pub struct Banner {
     pub text: String,
     pub level: BannerLevel,
     pub until: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Playlist,
+    FileManager,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +60,13 @@ pub struct NowPlaying {
     pub duration: Option<Duration>,
 }
 
+/// A recursive folder add running in the background.
+struct FolderScan {
+    files: Receiver<Vec<PathBuf>>,
+    target: Vec<usize>,
+    added: usize,
+}
+
 pub struct App {
     pub audio: AudioHandle,
     pub keymap: Keymap,
@@ -60,6 +80,10 @@ pub struct App {
     pub scroll: usize,
     /// Rows visible in the playlist (updated while drawing; used for paging).
     pub list_height: usize,
+    pub view: View,
+    pub fm: FileManager,
+    pub prompt: Option<Prompt>,
+    pub overlay: Overlay,
     pub playing: Option<TrackRef>,
     /// Last track that played, to resume from after Stop.
     pub last_played: Option<TrackRef>,
@@ -67,16 +91,18 @@ pub struct App {
     pending_queue: Option<TrackRef>,
     pub now: Option<NowPlaying>,
     pub banner: Option<Banner>,
-    pub overlay: Overlay,
     pub play_mode: PlayMode,
     pub repeat: RepeatMode,
     pub quit: bool,
     failures: usize,
+    scanner: MetadataScanner,
+    meta_cache: HashMap<PathBuf, TrackMetadata>,
+    scans: Vec<FolderScan>,
 }
 
 impl App {
     pub fn new(audio: AudioHandle, root: Group) -> Self {
-        App {
+        let mut app = App {
             audio,
             keymap: Keymap::default(),
             theme: Theme::default(),
@@ -87,18 +113,26 @@ impl App {
             cursor: 0,
             scroll: 0,
             list_height: 10,
+            view: View::Playlist,
+            fm: FileManager::new(crate::paths::default_music_dir()),
+            prompt: None,
+            overlay: Overlay::None,
             playing: None,
             last_played: None,
             pending_load: None,
             pending_queue: None,
             now: None,
             banner: None,
-            overlay: Overlay::None,
             play_mode: PlayMode::default(),
             repeat: RepeatMode::default(),
             quit: false,
             failures: 0,
-        }
+            scanner: MetadataScanner::new(),
+            meta_cache: HashMap::new(),
+            scans: Vec::new(),
+        };
+        app.request_all_metadata();
+        app
     }
 
     /// A playlist with the given files in its root group.
@@ -166,13 +200,32 @@ impl App {
         false
     }
 
+    pub fn is_scanning(&self) -> bool {
+        !self.scans.is_empty() || self.scanner.backlog() > 0
+    }
+
     // ---- input ------------------------------------------------------------------------
 
     pub fn context(&self) -> Context {
-        Context::Playlist
+        match self.view {
+            View::Playlist => Context::Playlist,
+            View::FileManager => Context::FileManager,
+        }
     }
 
     pub fn on_key(&mut self, key: KeyBinding) {
+        if let Some(prompt) = self.prompt.as_mut() {
+            match prompt.handle(key) {
+                PromptResult::Editing => {}
+                PromptResult::Cancelled => self.prompt = None,
+                PromptResult::Submitted(answer) => {
+                    if let Some(prompt) = self.prompt.take() {
+                        self.on_prompt(prompt.kind, answer);
+                    }
+                }
+            }
+            return;
+        }
         let Some(action) = self.keymap.lookup(self.context(), &key) else { return };
         if let Overlay::Help { scroll } = self.overlay {
             let scroll = match action {
@@ -197,6 +250,9 @@ impl App {
     }
 
     pub fn on_action(&mut self, action: Action) {
+        if self.view == View::FileManager && self.on_file_manager_action(action) {
+            return;
+        }
         let rows = self.rows().len();
         let page = self.list_height.max(1);
         match action {
@@ -250,6 +306,7 @@ impl App {
                     self.banner(BannerLevel::Info, text);
                 }
             }
+            Action::FileManager => self.open_file_manager(FmMode::AddFiles),
             Action::Help => self.overlay = Overlay::Help { scroll: 0 },
             Action::Close => self.banner = None,
             #[cfg(debug_assertions)]
@@ -257,6 +314,21 @@ impl App {
             other => {
                 self.banner(BannerLevel::Info, format!("{}: not available yet", other.description()))
             }
+        }
+    }
+
+    fn on_prompt(&mut self, kind: PromptKind, answer: String) {
+        match kind {
+            PromptKind::SelectGlob => {
+                if answer.is_empty() {
+                    return;
+                }
+                match self.fm.select_matching(&answer) {
+                    Ok(n) => self.banner(BannerLevel::Info, format!("{n} entries match \"{answer}\"")),
+                    Err(e) => self.banner(BannerLevel::Warning, format!("Bad pattern: {e}")),
+                }
+            }
+            other => log::debug!("unhandled prompt {other:?}"),
         }
     }
 
@@ -292,8 +364,8 @@ impl App {
             PlaybackStatus::Playing => self.audio.send(AudioCommand::Pause),
             PlaybackStatus::Paused => self.audio.send(AudioCommand::Resume),
             PlaybackStatus::Stopped => {
-                let target = match self.rows().get(self.cursor) {
-                    Some(Row::Track(i)) => Some(TrackRef::new(self.cwd.clone(), *i)),
+                let target = match (self.view, self.rows().get(self.cursor)) {
+                    (View::Playlist, Some(Row::Track(i))) => Some(TrackRef::new(self.cwd.clone(), *i)),
                     _ => self.last_played.clone().or_else(|| self.root.track_refs().into_iter().next()),
                 };
                 if let Some(target) = target {
@@ -309,6 +381,161 @@ impl App {
         self.audio.send(AudioCommand::QueueNext(None));
         self.audio.send(AudioCommand::LoadAndPlay(path));
         self.pending_load = Some(track);
+    }
+
+    // ---- file manager -------------------------------------------------------------------
+
+    pub fn open_file_manager(&mut self, mode: FmMode) {
+        self.fm.mode = mode;
+        self.fm.reload();
+        self.view = View::FileManager;
+    }
+
+    /// Handles file-manager specific actions. Returns false for actions it does not handle.
+    fn on_file_manager_action(&mut self, action: Action) -> bool {
+        let page = self.fm.height.max(1) as isize;
+        match action {
+            Action::CursorUp => self.fm.move_cursor(-1),
+            Action::CursorDown => self.fm.move_cursor(1),
+            Action::PageUp => self.fm.move_cursor(-page),
+            Action::PageDown => self.fm.move_cursor(page),
+            Action::Home => self.fm.cursor = 0,
+            Action::End => self.fm.cursor = self.fm.entries.len().saturating_sub(1),
+            Action::Back => self.fm.up(),
+            Action::Activate => {
+                if let Some(entry) = self.fm.enter() {
+                    match (self.fm.mode, entry.kind) {
+                        (FmMode::AddFiles, EntryKind::Audio) => {
+                            self.add_files(vec![entry.path]);
+                        }
+                        (_, EntryKind::Playlist) => {
+                            self.banner(BannerLevel::Info, "Loading playlists: not available yet");
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Action::Select => self.fm.toggle_current(),
+            Action::InvertSelection => self.fm.invert_selection(),
+            Action::SelectGlob => {
+                self.prompt = Some(Prompt::new(PromptKind::SelectGlob, "Select (glob, or re:regex): ", "*."));
+            }
+            Action::AddSelected => self.add_selection(),
+            Action::ToggleHidden => {
+                self.fm.show_hidden = !self.fm.show_hidden;
+                self.fm.reload();
+                let state = if self.fm.show_hidden { "shown" } else { "hidden" };
+                self.banner(BannerLevel::Info, format!("Hidden files {state}"));
+            }
+            Action::Close | Action::FileManager => self.view = View::Playlist,
+            _ => return false,
+        }
+        true
+    }
+
+    fn add_selection(&mut self) {
+        let picked = self.fm.take_selection();
+        if picked.is_empty() {
+            return;
+        }
+        let has_dirs = picked.iter().any(|e| e.kind == EntryKind::Dir);
+        let paths: Vec<PathBuf> = picked
+            .into_iter()
+            .filter(|e| matches!(e.kind, EntryKind::Dir | EntryKind::Audio))
+            .map(|e| e.path)
+            .collect();
+        if !has_dirs {
+            self.add_files(paths);
+            return;
+        }
+        // Folders are walked in the background; files go through the same worker so the
+        // playlist keeps the order of the selection.
+        self.scans.push(FolderScan {
+            files: fs_browser::scan_recursive(paths),
+            target: self.cwd.clone(),
+            added: 0,
+        });
+        self.banner(BannerLevel::Info, "Scanning folders…");
+    }
+
+    /// Appends files to the group shown in the playlist view.
+    pub fn add_files(&mut self, files: Vec<PathBuf>) {
+        let target = self.cwd.clone();
+        let n = self.add_tracks_to(&target, files);
+        self.banner(BannerLevel::Info, format!("Added {n} file(s) to {}", self.current_group().name));
+    }
+
+    fn add_tracks_to(&mut self, group: &[usize], files: Vec<PathBuf>) -> usize {
+        let n = files.len();
+        for path in &files {
+            self.scanner.request(path);
+        }
+        let cache = &self.meta_cache;
+        let tracks = files.into_iter().map(|path| {
+            let mut t = Track::new(path);
+            t.metadata = cache.get(&t.path).cloned();
+            t
+        });
+        let target = if self.root.group_at(group).is_some() { group } else { &[] };
+        if let Some(g) = self.root.group_at_mut(target) {
+            g.tracks.extend(tracks);
+        }
+        n
+    }
+
+    // ---- background work ----------------------------------------------------------------
+
+    fn request_all_metadata(&mut self) {
+        let mut paths = Vec::new();
+        self.root.walk(&mut |g| paths.extend(g.tracks.iter().filter(|t| t.metadata.is_none()).map(|t| t.path.clone())));
+        for p in paths {
+            self.scanner.request(&p);
+        }
+    }
+
+    /// Applies metadata results and folder-scan batches. Returns true if anything changed.
+    pub fn process_background(&mut self) -> bool {
+        let mut changed = false;
+
+        let results: HashMap<PathBuf, TrackMetadata> =
+            self.scanner.results().filter_map(|(p, m)| m.map(|m| (p, m))).collect();
+        if !results.is_empty() {
+            self.root.walk_mut(&mut |g| {
+                for t in g.tracks.iter_mut().filter(|t| t.metadata.is_none()) {
+                    if let Some(m) = results.get(&t.path) {
+                        t.metadata = Some(m.clone());
+                    }
+                }
+            });
+            self.meta_cache.extend(results);
+            changed = true;
+        }
+
+        let mut finished = Vec::new();
+        for i in 0..self.scans.len() {
+            let mut batches = Vec::new();
+            let done = loop {
+                match self.scans[i].files.try_recv() {
+                    Ok(batch) => batches.push(batch),
+                    Err(crossbeam_channel::TryRecvError::Empty) => break false,
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => break true,
+                }
+            };
+            for batch in batches {
+                let target = self.scans[i].target.clone();
+                self.scans[i].added += self.add_tracks_to(&target, batch);
+                changed = true;
+            }
+            if done {
+                finished.push(i);
+            }
+        }
+        for i in finished.into_iter().rev() {
+            let scan = self.scans.remove(i);
+            self.banner(BannerLevel::Info, format!("Added {} file(s) from folders", scan.added));
+            changed = true;
+        }
+        changed
     }
 
     // ---- playlist order (simple in-group order; the full engine arrives with groups) ----

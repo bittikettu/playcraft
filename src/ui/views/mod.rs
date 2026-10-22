@@ -1,6 +1,7 @@
 //! Rendering. The layout follows spec §5: playlist (left), Now Playing (right),
 //! progress bar and a contextual key/prompt bar.
 
+mod file_manager;
 mod help;
 mod now_playing;
 mod playlist;
@@ -14,7 +15,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::Block;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::app::{App, Overlay};
+use super::app::{App, Overlay, View};
 
 /// Width of the Now Playing pane; it is hidden on terminals narrower than `SIDE_MIN_WIDTH`.
 const SIDE_WIDTH: u16 = 28;
@@ -33,12 +34,20 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     ])
     .areas(area);
 
-    if main.width >= SIDE_MIN_WIDTH {
-        let [list, side] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(SIDE_WIDTH)]).areas(main);
-        playlist::draw(f, app, list);
-        now_playing::draw(f, app, side);
-    } else {
-        playlist::draw(f, app, main);
+    match app.view {
+        View::Playlist if main.width >= SIDE_MIN_WIDTH => {
+            let [list, side] =
+                Layout::horizontal([Constraint::Fill(1), Constraint::Length(SIDE_WIDTH)]).areas(main);
+            playlist::draw(f, app, list, true);
+            now_playing::draw(f, app, side);
+        }
+        View::Playlist => playlist::draw(f, app, main, true),
+        View::FileManager if main.width >= 60 => {
+            let [files, list] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(main);
+            file_manager::draw(f, app, files);
+            playlist::draw(f, app, list, false);
+        }
+        View::FileManager => file_manager::draw(f, app, main),
     }
     progress::draw(f, app, progress_area, compact);
     status_bar::draw(f, app, bar_area, compact);

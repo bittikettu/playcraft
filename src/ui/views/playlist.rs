@@ -8,7 +8,9 @@ use crate::model::TrackRef;
 use crate::ui::app::{App, Row};
 use crate::ui::keymap::{Action, Context};
 
-pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+/// Draws the current group. `focused` is false when it is the read-only side pane of the
+/// file manager.
+pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
     let theme = &app.theme;
     let km = &app.keymap;
     let hints = [
@@ -18,9 +20,13 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         (Action::Help, "Help"),
     ];
     let mut title = vec![Span::styled(" ", theme.border)];
-    for (action, label) in hints {
-        title.push(Span::styled(format!("[{}]", km.hint(Context::Playlist, action)), theme.key));
-        title.push(Span::styled(format!(" {label}  "), theme.title));
+    if focused {
+        for (action, label) in hints {
+            title.push(Span::styled(format!("[{}]", km.hint(Context::Playlist, action)), theme.key));
+            title.push(Span::styled(format!(" {label}  "), theme.title));
+        }
+    } else {
+        title.push(Span::styled("Playlist ", theme.title));
     }
     let block = Block::bordered().border_style(theme.border).style(theme.base).title(Line::from(title));
     let inner = block.inner(area);
@@ -40,7 +46,9 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect) {
 
     let list = Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner };
     let height = list.height as usize;
-    app.list_height = height;
+    if focused {
+        app.list_height = height;
+    }
     let rows = app.rows();
     if rows.is_empty() {
         let hint = format!(
@@ -61,7 +69,8 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let digits = rows.len().to_string().len().max(2);
     let mut lines = Vec::with_capacity(height);
     for (i, row) in rows.iter().enumerate().skip(app.scroll).take(height) {
-        let marker = if i == app.cursor { app.symbols.cursor } else { " " };
+        let is_cursor = focused && i == app.cursor;
+        let marker = if is_cursor { app.symbols.cursor } else { " " };
         let number = format!("{marker}{:0digits$}. ", i + 1);
         let (text, right, mut style) = match *row {
             Row::Group(g) => {
@@ -89,7 +98,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect) {
                 (track.display_name(), right, style)
             }
         };
-        if i == app.cursor {
+        if is_cursor {
             style = style.patch(theme.cursor);
         }
         let body = justify(&text, &right, width.saturating_sub(number.len()), app.symbols.ellipsis);

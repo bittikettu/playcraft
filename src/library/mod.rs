@@ -1,4 +1,7 @@
-//! Finding audio files on disk.
+//! Finding audio files on disk and reading their metadata.
+
+pub mod fs_browser;
+pub mod scanner;
 
 use std::path::{Path, PathBuf};
 

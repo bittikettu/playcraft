@@ -1,7 +1,9 @@
 //! The terminal user interface (ratatui + crossterm).
 
 pub mod app;
+pub mod file_manager;
 pub mod keymap;
+pub mod prompt;
 pub mod theme;
 mod views;
 
@@ -30,6 +32,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
     let mut last_draw = Instant::now();
     while !app.quit {
         dirty |= app.process_audio_events();
+        dirty |= app.process_background();
         dirty |= app.tick();
         let animating = app.is_animating();
         if dirty || (animating && last_draw.elapsed() >= frame_interval) {
@@ -156,6 +159,83 @@ pub(crate) mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.root.tracks.iter().all(|t| t.missing));
+    }
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join(name)
+    }
+
+    fn type_keys(app: &mut App, keys: &[&str]) {
+        for k in keys {
+            app.on_key(KeyBinding::parse(k).unwrap());
+        }
+    }
+
+    #[test]
+    fn file_manager_adds_files_and_folders_with_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let album = dir.path().join("Album");
+        std::fs::create_dir(&album).unwrap();
+        std::fs::copy(fixture("tagged.flac"), album.join("01 tagged.flac")).unwrap();
+        std::fs::copy(fixture("sine_44k_stereo.ogg"), album.join("02 sine.ogg")).unwrap();
+        std::fs::copy(fixture("tagged.mp3"), dir.path().join("single.mp3")).unwrap();
+        std::fs::write(dir.path().join("notes.txt"), b"x").unwrap();
+
+        let mut app = test_app(Group::new(0, "Root"));
+        app.fm = file_manager::FileManager::new(dir.path().to_path_buf());
+        type_keys(&mut app, &["F1"]);
+        assert_eq!(app.view, app::View::FileManager);
+        let screen = render(&mut app, 100, 20);
+        println!("{screen}");
+        assert!(screen.contains("[DIR] Album"));
+        assert!(screen.contains("single.mp3"));
+        assert!(!screen.contains("notes.txt"));
+
+        // Select everything with a pattern, then add: the folder is scanned in the background.
+        type_keys(&mut app, &["*", "Ctrl+u", "*", "Enter", "a"]);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.is_scanning() || app.root.tracks.iter().any(|t| t.metadata.is_none()) {
+            app.process_background();
+            assert!(Instant::now() < deadline, "scan did not finish: {:?}", app.root.tracks);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let names: Vec<_> = app.root.tracks.iter().map(|t| t.file_name()).collect();
+        assert_eq!(names, vec!["01 tagged.flac", "02 sine.ogg", "single.mp3"]);
+        assert_eq!(app.root.tracks[0].display_name(), "Test Artist - Test Title");
+
+        type_keys(&mut app, &["Esc"]);
+        assert_eq!(app.view, app::View::Playlist);
+        let screen = render(&mut app, 100, 20);
+        println!("{screen}");
+        assert!(screen.contains("Test Artist - Test Title"));
+        assert!(screen.contains("[00:02]"));
+    }
+
+    #[test]
+    fn ten_thousand_tracks_stay_responsive() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..10_000 {
+            std::fs::write(dir.path().join(format!("{i:05}.mp3")), b"").unwrap();
+        }
+        let mut app = test_app(Group::new(0, "Root"));
+        app.fm = file_manager::FileManager::new(dir.path().parent().unwrap().to_path_buf());
+        app.fm.selected.insert(dir.path().to_path_buf());
+        app.fm.entries.retain(|e| e.path == dir.path());
+        app.view = app::View::FileManager;
+        app.on_action(keymap::Action::AddSelected);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut worst = Duration::ZERO;
+        while app.is_scanning() {
+            let t = Instant::now();
+            app.process_background();
+            render(&mut app, 120, 40);
+            worst = worst.max(t.elapsed());
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(app.root.tracks.len(), 10_000);
+        // A frame (background work + full redraw) must stay well under 100 ms even in debug builds.
+        assert!(worst < Duration::from_millis(100), "slowest frame took {worst:?}");
     }
 
     #[test]
