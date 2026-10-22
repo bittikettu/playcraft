@@ -80,6 +80,18 @@ impl Resampler {
         self.source
     }
 
+    /// Output frame index (counted from the last reset) at which the next input frame will
+    /// appear. Used to place gapless track boundaries exactly.
+    pub fn output_frames_for_input(&self) -> u64 {
+        match self.fft {
+            Some(_) => {
+                let ratio = f64::from(self.device_rate) / f64::from(self.source.sample_rate);
+                (self.input_frames as f64 * ratio).round() as u64
+            }
+            None => self.input_frames,
+        }
+    }
+
     /// Drops buffered audio and restarts the filter (after a seek or stop).
     pub fn reset(&mut self) {
         self.pending.clear();
@@ -96,10 +108,10 @@ impl Resampler {
         let mut work = std::mem::take(&mut self.work);
         work.clear();
         downmix(input, self.source.channels, self.work_channels, &mut work);
+        self.input_frames += (work.len() / self.work_channels) as u64;
         if self.fft.is_none() {
             self.emit(&work, out);
         } else {
-            self.input_frames += (work.len() / self.work_channels) as u64;
             self.pending.extend_from_slice(&work);
             self.run_chunks(out, false);
         }
