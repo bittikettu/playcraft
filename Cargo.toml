@@ -1,0 +1,48 @@
+[package]
+name = "mp3blaster-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+description = "A memory-safe reimplementation of the classic MP3Blaster terminal audio player"
+license = "MIT"
+readme = "README.md"
+keywords = ["audio", "player", "tui", "mp3", "terminal"]
+categories = ["multimedia::audio", "command-line-utilities"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+# Decoding in debug builds is too slow for real-time playback; optimise dependencies.
+[profile.dev.package."*"]
+opt-level = 2
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+cpal = "0.18.2"
+crossbeam-channel = "0.5.17"
+dirs = "7.0.0"
+dunce = "1.0.5"
+encoding_rs = "0.8.42"
+globset = "0.4.20"
+lofty = "0.25.4"
+log = "0.4.34"
+rand = "0.10.3"
+ratatui = "0.30.2"
+ringbuf = "0.5.3"
+rubato = "5.0.1"
+rustfft = "6.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+symphonia = { version = "0.6.1", features = ["mp3", "aac", "isomp4", "flac", "vorbis", "ogg", "wav", "pcm"] }
+thiserror = "2.0.21"
+toml = "1.1.8"
+walkdir = "2.5.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console"] }
