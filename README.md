@@ -176,21 +176,32 @@ AI assistants that speak the [Model Context Protocol](https://modelcontextprotoc
 
 **How it works.** `mp3blaster-rs --mcp` is the MCP server the assistant starts. It speaks MCP over stdin/stdout and forwards each tool call to the player running in your terminal, which carries it out and shows a banner such as "Claude Code: queued 5 tracks". Start the player yourself as usual. If it isn't running, the assistant is told so.
 
+There is no port to configure. The player picks a free local port at every start and records it in `control.json`, where `--mcp` finds it.
+
 **Claude Code:**
 
 ```sh
 claude mcp add mp3blaster -- "C:\path\to\mp3blaster-rs.exe" --mcp
 ```
 
-**Claude Desktop** (`%APPDATA%\Claude\claude_desktop_config.json`):
+**Claude Desktop:**
 
-```json
-{
-  "mcpServers": {
-    "mp3blaster": { "command": "C:\\path\\to\\mp3blaster-rs.exe", "args": ["--mcp"] }
-  }
-}
-```
+1. Open **Settings → Developer → Edit Config**. This opens `claude_desktop_config.json`, usually `%APPDATA%\Claude\claude_desktop_config.json`.
+2. Add the server, with backslashes doubled. If the file already has an `"mcpServers"` block, add only the `"mp3blaster"` entry to it.
+
+   ```json
+   {
+     "mcpServers": {
+       "mp3blaster": { "command": "C:\\path\\to\\mp3blaster-rs.exe", "args": ["--mcp"] }
+     }
+   }
+   ```
+3. Quit Claude Desktop completely (from the tray icon, not just by closing the window), then start it again. **mp3blaster** then appears in the chat's tools menu.
+
+**If it doesn't work:**
+- Claude Desktop logs the server's start-up in `mcp-server-mp3blaster.log`, in its `logs` folder (usually `%APPDATA%\Claude\logs`).
+- The bridge logs each call to `mcp.log` in the player's state folder (`%LOCALAPPDATA%\mp3blaster-rs`).
+- `control.json` exists in that folder only while a player with remote control is running.
 
 **Tools:**
 
