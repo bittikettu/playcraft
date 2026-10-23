@@ -81,6 +81,25 @@ impl Default for Ui {
     }
 }
 
+/// `[mcp]`: remote control by AI assistants through `mp3blaster-rs --mcp`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Mcp {
+    /// Accept tool calls from the MCP bridge (localhost only, protected by a token).
+    pub enabled: bool,
+    /// Folders searched for songs besides the playlist. Empty means the music folder.
+    pub library_dirs: Vec<String>,
+}
+
+impl Default for Mcp {
+    fn default() -> Self {
+        Mcp {
+            enabled: true,
+            library_dirs: Vec::new(),
+        }
+    }
+}
+
 /// A key list in `[keybindings]`: `play_pause = ["Space", "c"]` or `stop = "s"`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -103,6 +122,7 @@ pub struct Config {
     pub general: General,
     pub audio: Audio,
     pub ui: Ui,
+    pub mcp: Mcp,
     pub keybindings: Keybindings,
 }
 
@@ -157,7 +177,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
         }
     };
     for key in doc.keys() {
-        if !["general", "audio", "ui", "keybindings"].contains(&key.as_str()) {
+        if !["general", "audio", "ui", "mcp", "keybindings"].contains(&key.as_str()) {
             warnings.push(format!("config: unknown section [{key}]"));
         }
     }
@@ -165,6 +185,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
         general: section(&doc, "general", &mut warnings),
         audio: section(&doc, "audio", &mut warnings),
         ui: section(&doc, "ui", &mut warnings),
+        mcp: section(&doc, "mcp", &mut warnings),
         keybindings: section(&doc, "keybindings", &mut warnings),
     };
 
@@ -307,6 +328,23 @@ impl Config {
         }
     }
 
+    /// Folders AI search indexes (`[mcp] library_dirs`, else the music folder).
+    pub fn library_dirs(&self) -> Vec<PathBuf> {
+        let dirs: Vec<PathBuf> = self
+            .mcp
+            .library_dirs
+            .iter()
+            .map(|d| d.trim())
+            .filter(|d| !d.is_empty())
+            .map(crate::paths::expand_tilde)
+            .collect();
+        if dirs.is_empty() {
+            vec![self.music_dir()]
+        } else {
+            dirs
+        }
+    }
+
     pub fn output_device(&self) -> Option<String> {
         Some(self.audio.output_device.trim().to_string()).filter(|d| !d.is_empty())
     }
@@ -372,6 +410,13 @@ pub fn default_file_text() -> String {
          # unicode or ascii (use ascii in the legacy console with raster fonts)\n\
          charset = \"unicode\"\n\
          show_hidden = false\n\
+         \n\
+         [mcp]\n\
+         # AI control: lets an MCP client such as Claude Code or Claude Desktop drive the player\n\
+         # through `mp3blaster-rs --mcp` (localhost only, protected by a per-user token)\n\
+         enabled = true\n\
+         # Folders searched for songs besides the playlist (empty = the music folder)\n\
+         library_dirs = []\n\
          \n\
          [keybindings]\n\
          # Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,\n\

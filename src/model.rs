@@ -87,7 +87,7 @@ impl PlayMode {
 }
 
 /// ReplayGain values read from tags. Gains are in dB, peaks are linear amplitude.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct ReplayGain {
     pub track_gain_db: Option<f32>,
     pub track_peak: Option<f32>,
@@ -95,7 +95,7 @@ pub struct ReplayGain {
     pub album_peak: Option<f32>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TrackMetadata {
     pub title: Option<String>,
     pub artist: Option<String>,

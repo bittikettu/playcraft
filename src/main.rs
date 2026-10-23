@@ -2,8 +2,11 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use mp3blaster_rs::audio::{AudioConfig, AudioHandle};
+use mp3blaster_rs::library::index::LibraryIndex;
 use mp3blaster_rs::ui::app::{App, BannerLevel};
-use mp3blaster_rs::{config, headless, library, log_ring, paths, playlist, session, ui};
+use mp3blaster_rs::{
+    config, headless, library, log_ring, mcp, paths, playlist, remote, session, ui,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -42,6 +45,10 @@ struct Cli {
     /// Do not resume the last track and position from the previous session.
     #[arg(long)]
     no_resume: bool,
+
+    /// Serve MCP on stdin/stdout so AI assistants can control the running player.
+    #[arg(long)]
+    mcp: bool,
 }
 
 fn write_default_config(path: Option<PathBuf>) -> anyhow::Result<()> {
@@ -59,6 +66,12 @@ fn write_default_config(path: Option<PathBuf>) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if cli.mcp {
+        // stdout belongs to the protocol; log to a file of its own.
+        let log = paths::state_dir().map(|d| d.join("mcp.log"));
+        log_ring::init(log::LevelFilter::Info, log.as_deref());
+        return Ok(mcp::run_stdio(paths::state_dir())?);
+    }
     log_ring::init(log::LevelFilter::Info, paths::log_file().as_deref());
 
     if cli.list_devices {
@@ -103,6 +116,25 @@ fn main() -> anyhow::Result<()> {
         };
         app.banner(BannerLevel::Warning, format!("{first}{more}"));
     }
+
+    // Remote control for AI assistants (`mp3blaster-rs --mcp` forwards to it).
+    app.library = LibraryIndex::new(
+        cfg.library_dirs(),
+        paths::state_dir().map(|d| d.join("library.json")),
+    );
+    let _control = match paths::state_dir().filter(|_| cfg.mcp.enabled) {
+        Some(dir) => match remote::ControlServer::start(&dir) {
+            Ok((server, calls)) => {
+                app.remote = Some(calls);
+                Some(server)
+            }
+            Err(e) => {
+                log::warn!("remote control unavailable: {e}");
+                None
+            }
+        },
+        None => None,
+    };
 
     let session_path = paths::session_file();
     if let Some(saved) = session_path.as_deref().and_then(session::load) {

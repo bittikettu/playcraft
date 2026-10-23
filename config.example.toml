@@ -30,6 +30,13 @@ color_theme = "dracula"
 charset = "unicode"
 show_hidden = false
 
+[mcp]
+# AI control: lets an MCP client such as Claude Code or Claude Desktop drive the player
+# through `mp3blaster-rs --mcp` (localhost only, protected by a per-user token)
+enabled = true
+# Folders searched for songs besides the playlist (empty = the music folder)
+library_dirs = []
+
 [keybindings]
 # Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,
 # Ins, Left/Right/Up/Down, PgUp/PgDn, Home/End, F1-F24, with Ctrl+/Alt+/Shift+ prefixes.

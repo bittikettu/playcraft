@@ -82,6 +82,7 @@ mp3blaster-rs [OPTIONS] [PATHS]...
   --list-devices           list audio outputs and exit
   --write-default-config   write a commented config.toml and exit
   --headless               no TUI: line commands on stdin (p, s, n, f, b, +, -, q)
+  --mcp                    MCP server on stdin/stdout for AI assistants (see AI control)
 ```
 
 - **Several paths:** files and folders go into the root group, and each playlist becomes a group of its own.
@@ -165,6 +166,54 @@ play_pause = ["Space", "c"]
 next_track = ["n", "6"]
 ```
 
+## AI control (MCP)
+
+AI assistants that speak the [Model Context Protocol](https://modelcontextprotocol.io), such as Claude Code and Claude Desktop, can control the player. You can ask things like:
+- "Play some jazz."
+- "Queue a few songs from the 80s."
+- "What's playing?"
+- "Show HYPERSPACE fullscreen."
+
+**How it works.** `mp3blaster-rs --mcp` is the MCP server the assistant starts. It speaks MCP over stdin/stdout and forwards each tool call to the player running in your terminal, which carries it out and shows a banner such as "Claude Code: queued 5 tracks". Start the player yourself as usual. If it isn't running, the assistant is told so.
+
+**Claude Code:**
+
+```sh
+claude mcp add mp3blaster -- "C:\path\to\mp3blaster-rs.exe" --mcp
+```
+
+**Claude Desktop** (`%APPDATA%\Claude\claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "mp3blaster": { "command": "C:\\path\\to\\mp3blaster-rs.exe", "args": ["--mcp"] }
+  }
+}
+```
+
+**Tools:**
+
+| Tool | Does |
+| --- | --- |
+| `get_status` | Shows the current track, position, volume, modes, what plays next, the queue and the visualizer. |
+| `browse_library` | Counts tracks per genre, artist, album or year. |
+| `search_tracks` | Searches by words, genre, artist, album or year range, in the playlist and/or the music folder, optionally in random order. |
+| `queue_tracks`, `remove_from_queue`, `clear_queue` | Edit the play queue. `play_now` starts the first track at once. |
+| `playback`, `seek`, `set_volume` | Play, pause, toggle, stop, next and previous; seeking; volume. |
+| `set_visualizer` | Sets the style (bars, matrix, defrag, hyperspace), fullscreen, and the spectrum layout. |
+| `set_play_options`, `set_theme` | Play mode and repeat; the colour theme for this session. |
+
+**Search covers the playlist and your music folder.** On the first request, the player indexes the music folder in the background and caches the tags in `library.json` in its state folder. Later starts re-read only the files that changed. A song found only in the folder is added to a "Requests" group in the playlist when it is queued. Every action an assistant takes is also written to the message log (`L`).
+
+```toml
+[mcp]
+enabled = true                              # false turns remote control off
+library_dirs = ["D:/Music", "E:/Archive"]   # folders to search; empty = the music folder
+```
+
+**Security.** The player listens on `127.0.0.1` only, on a random port. It writes the port and a random token to `control.json` in your state folder, and accepts only requests that carry that token. So only your own programs can control it, and nothing listens on the network.
+
 ## The `.blst` format
 
 `.blst` is JSON that stores the full group tree. Track paths inside the playlist's own folder are stored relative to it.
@@ -193,7 +242,8 @@ next_track = ["n", "6"]
 - **Themes:** the default is Dracula instead of `classic_blue`. The spec's four themes are kept, five VS Code themes are added, and there is an in-app picker (`t`).
 - **Additions:**
   - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `v`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, and the play queue (`e`/Ins, `u`, `X`);
-  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`;
+  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, and the `[mcp]` section;
+  - AI control through MCP (`--mcp`), with a play queue and music folder search;
   - the `[keybindings.file_manager]` section.
 - **Key conflict:** the spec's UI mockup shows F1 as Help, but its key table says F1 opens the file manager. The key table wins, so Help is `?`.
 

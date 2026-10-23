@@ -10,6 +10,7 @@ mod playback;
 mod playlist_io;
 pub mod prompt;
 mod queue;
+mod remote;
 pub mod theme;
 mod theme_picker;
 mod views;
@@ -145,6 +146,7 @@ fn event_loop(
         app.update_spectrum();
         dirty |= app.process_audio_events();
         dirty |= app.process_background();
+        dirty |= app.process_remote_calls();
         dirty |= app.tick();
         let animating = app.is_animating();
         if dirty || (animating && last_draw.elapsed() >= frame_interval) {

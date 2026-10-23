@@ -13,10 +13,12 @@ use crate::audio::{AudioCommand, AudioHandle, StreamInfo};
 use crate::config::{Config, ReplayGainMode};
 use crate::defrag::Defrag;
 use crate::hyperspace::Hyperspace;
+use crate::library::index::LibraryIndex;
 use crate::library::scanner::MetadataScanner;
 use crate::matrix::MatrixRain;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
 use crate::playlist::engine::Engine;
+use crate::remote::RemoteCall;
 use crate::spectrum::SpectrumAnalyzer;
 
 use super::file_manager::{FileManager, FmMode};
@@ -220,6 +222,10 @@ pub struct App {
     pub(crate) scanner: MetadataScanner,
     pub(crate) meta_cache: HashMap<PathBuf, TrackMetadata>,
     pub(crate) scans: Vec<FolderScan>,
+    /// Tool calls from AI assistants (the MCP bridge), when remote control is on.
+    pub remote: Option<Receiver<RemoteCall>>,
+    /// The music folder index that assistants search besides the playlist.
+    pub library: LibraryIndex,
 }
 
 impl App {
@@ -271,6 +277,8 @@ impl App {
             scanner: MetadataScanner::new(),
             meta_cache: HashMap::new(),
             scans: Vec::new(),
+            remote: None,
+            library: LibraryIndex::new(Vec::new(), None),
         };
         app.request_all_metadata();
         app
@@ -539,7 +547,7 @@ impl App {
         self.view == View::Visualizer || self.spectrum_layout != SpectrumLayout::Off
     }
 
-    fn toggle_visualizer(&mut self) {
+    pub(crate) fn toggle_visualizer(&mut self) {
         if self.view == View::Visualizer {
             self.view = self.view_before_visualizer;
         } else {
@@ -772,7 +780,11 @@ impl App {
     fn change_volume(&mut self, delta: f32) {
         let v = (self.audio.shared().volume() + delta).clamp(0.0, 1.0);
         // Snap to the 5% grid so repeated steps land on round numbers.
-        let v = (v * 20.0).round() / 20.0;
+        self.set_volume((v * 20.0).round() / 20.0);
+    }
+
+    pub(crate) fn set_volume(&mut self, v: f32) {
+        let v = v.clamp(0.0, 1.0);
         self.audio.send(AudioCommand::SetVolume(v));
         self.audio.shared().set_volume(v);
     }
