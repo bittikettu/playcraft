@@ -1,6 +1,7 @@
 //! OS-specific helpers. Windows gets real implementations; other systems simple fallbacks.
 
 use std::fs::Metadata;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
@@ -53,4 +54,51 @@ pub fn on_console_close(on_close: impl Fn() + Send + Sync + 'static) {
     windows::on_console_close(Box::new(on_close));
     #[cfg(not(windows))]
     let _ = on_close;
+}
+
+/// Terminal output that collects a whole frame and hands it over in one piece on flush.
+/// On Windows that is a single `WriteConsoleW` call instead of one call per 4 KiB.
+pub struct FrameWriter {
+    buf: Vec<u8>,
+    #[cfg(windows)]
+    console: Option<windows::Console>,
+}
+
+impl FrameWriter {
+    pub fn stdout() -> Self {
+        FrameWriter {
+            buf: Vec::with_capacity(1 << 20),
+            #[cfg(windows)]
+            console: windows::Console::stdout(),
+        }
+    }
+}
+
+impl Write for FrameWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.buf.is_empty() {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        if let Some(console) = self.console.as_mut() {
+            let result = console.write_all(&self.buf);
+            self.buf.clear();
+            return result;
+        }
+        let mut out = std::io::stdout().lock();
+        let result = out.write_all(&self.buf).and_then(|()| out.flush());
+        self.buf.clear();
+        result
+    }
+}
+
+impl Drop for FrameWriter {
+    fn drop(&mut self) {
+        let _ = self.flush();
+    }
 }

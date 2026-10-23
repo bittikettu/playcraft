@@ -323,6 +323,9 @@ impl App {
             "hyperspace" => Visualizer::Hyperspace,
             _ => Visualizer::Bars,
         };
+        if let Some(tuning) = crate::hyperspace::Tuning::preset(&config.ui.hyperspace_quality) {
+            self.hyperspace.tuning = tuning;
+        }
         self.replaygain = config.general.replaygain;
         self.audio
             .send(AudioCommand::SetReplayGain(config.general.replaygain));

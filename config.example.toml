@@ -22,6 +22,8 @@ spectrum_layout = "wide"
 # (a disk defragmenter that finishes with the song) or hyperspace (3D demoscene);
 # v cycles them
 visualizer = "bars"
+# HYPERSPACE quality: high, balanced or fast (fast sends the least to the terminal)
+hyperspace_quality = "balanced"
 # dracula, tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome (or press t in the player)
 color_theme = "dracula"
 # unicode or ascii (use ascii in the legacy console with raster fonts)

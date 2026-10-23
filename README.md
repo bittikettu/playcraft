@@ -44,6 +44,8 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
     - a spectrum corona and a circular oscilloscope;
     - beat detection with a live BPM readout, where each beat fires a shockwave and a particle burst;
     - a hyperspace jump on every new track, with the title flying in as glowing pixel text.
+
+    How much the terminal has to draw is tunable with `hyperspace_quality = "high" | "balanced" | "fast"` (default `balanced`). If the terminal still can't keep up, the frame rate drops by itself.
 - **ReplayGain** (track or album, limited to avoid clipping) and logarithmic, click-free volume.
 - **Audio device handling:** device unplugged → playback pauses with a banner and resumes when the device returns. Windows default device changes → playback follows.
 - **Sessions:** the playlist, track, position, volume and modes are restored on the next start. They are saved every 30 s, on quit, and when the console window is closed.
@@ -141,7 +143,8 @@ output_device = "Arctis"    # part of a device name; empty follows the Windows d
 color_theme = "dracula"     # or tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome
 charset = "ascii"           # for the legacy console with raster fonts
 spectrum_layout = "wide"    # wide (full-width strip) or pane (inside Now Playing)
-visualizer = "defrag"       # bars, matrix (rain of the file's bytes) or defrag
+visualizer = "hyperspace"   # bars, matrix (rain of the file's bytes), defrag or hyperspace
+hyperspace_quality = "balanced"  # high, balanced or fast (fast suits slow terminals)
 
 [keybindings]
 play_pause = ["Space", "c"]
@@ -188,7 +191,9 @@ cargo clippy --all-targets -- -D warnings
 tests/fixtures/generate.ps1                  # regenerate audio fixtures (needs ffmpeg)
 ```
 
-None of the tests need a sound card. The audio pipeline is tested by pulling samples from the renderer exactly as the device callback would. This proves, for example, that a split FLAC file plays back gaplessly and sample-identical to the original.
+None of the tests need a sound card.
+
+The terminal backend (`src/ui/backend.rs`) sends only the colours that changed, and each frame is written to the console in a single call. A test replays its output through a terminal emulator (`vt100`) and checks that every cell matches. To measure how much a visualiser sends to the terminal:`cargo test --release --lib hyperspace_terminal_load -- --ignored --nocapture`. The audio pipeline is tested by pulling samples from the renderer exactly as the device callback would. This proves, for example, that a split FLAC file plays back gaplessly and sample-identical to the original.
 
 ## License
 

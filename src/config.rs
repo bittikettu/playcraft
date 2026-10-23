@@ -59,6 +59,8 @@ pub struct Ui {
     pub spectrum_layout: String,
     /// `bars`, `matrix` (digital rain of the file's bytes), `defrag` or `hyperspace`.
     pub visualizer: String,
+    /// HYPERSPACE quality: `high`, `balanced` or `fast` (less terminal output).
+    pub hyperspace_quality: String,
     pub color_theme: String,
     pub charset: String,
     pub show_hidden: bool,
@@ -71,6 +73,7 @@ impl Default for Ui {
             show_spectrum: true,
             spectrum_layout: "wide".into(),
             visualizer: "bars".into(),
+            hyperspace_quality: "balanced".into(),
             color_theme: DEFAULT_THEME.into(),
             charset: "unicode".into(),
             show_hidden: false,
@@ -184,6 +187,13 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ui.visualizer
         ));
         ui.visualizer = Ui::default().visualizer;
+    }
+    if crate::hyperspace::Tuning::preset(&ui.hyperspace_quality).is_none() {
+        warnings.push(format!(
+            "config: hyperspace_quality must be high, balanced or fast, not \"{}\"",
+            ui.hyperspace_quality
+        ));
+        ui.hyperspace_quality = Ui::default().hyperspace_quality;
     }
     if !["wide", "pane"].contains(&ui.spectrum_layout.as_str()) {
         warnings.push(format!(
@@ -355,6 +365,8 @@ pub fn default_file_text() -> String {
          # (a disk defragmenter that finishes with the song) or hyperspace (3D demoscene);\n\
          # v cycles them\n\
          visualizer = \"bars\"\n\
+         # HYPERSPACE quality: high, balanced or fast (fast sends the least to the terminal)\n\
+         hyperspace_quality = \"balanced\"\n\
          # THEME_LIST\n\
          color_theme = \"DEFAULT_THEME\"\n\
          # unicode or ascii (use ascii in the legacy console with raster fonts)\n\

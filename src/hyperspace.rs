@@ -282,6 +282,71 @@ pub struct Hyperspace {
     track: Option<u64>,
     pub beat: BeatDetector,
     pub palette: Palette,
+    pub tuning: Tuning,
+}
+
+/// Knobs that trade looks for terminal output.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tuning {
+    pub nebula: bool,
+    pub bloom: bool,
+    /// Colour channels are rounded down to multiples of `1 << quant_shift`.
+    pub quant_shift: u8,
+    /// How fast trails fade (per second).
+    pub fade_rate: f32,
+    /// Light below this is drawn as plain background.
+    pub floor: f32,
+    /// A shown pixel is only updated when a colour channel moves by more than this (or the
+    /// pixel returns to the background). Suppresses tiny changes the terminal would
+    /// otherwise have to redraw every frame.
+    pub hysteresis: u8,
+    /// Star count relative to the screen area (1.0 = one star per 45 pixels).
+    pub stars: f32,
+    /// Scales how many particles each beat throws out.
+    pub particles: f32,
+}
+
+impl Tuning {
+    /// Quality presets. Measured at 200x55 cells with busy music, terminal output per frame:
+    /// `high` ~140 KB, `balanced` ~72 KB, `fast` ~35 KB (untuned, with ratatui's own backend:
+    /// ~285 KB). See `hyperspace_terminal_load` in `ui/mod.rs`.
+    pub const PRESETS: &[&str] = &["high", "balanced", "fast"];
+
+    pub fn preset(name: &str) -> Option<Tuning> {
+        let base = Tuning {
+            nebula: true,
+            bloom: true,
+            quant_shift: 3,
+            fade_rate: 9.0,
+            floor: 0.03,
+            hysteresis: 32,
+            stars: 1.0,
+            particles: 1.0,
+        };
+        match name {
+            "high" => Some(Tuning {
+                quant_shift: 2,
+                hysteresis: 16,
+                ..base
+            }),
+            "balanced" => Some(base),
+            "fast" => Some(Tuning {
+                quant_shift: 4,
+                hysteresis: 48,
+                bloom: false,
+                stars: 0.5,
+                particles: 0.6,
+                ..base
+            }),
+            _ => None,
+        }
+    }
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Tuning::preset("balanced").expect("balanced preset exists")
+    }
 }
 
 impl Default for Hyperspace {
@@ -352,6 +417,7 @@ impl Hyperspace {
             track: None,
             beat: BeatDetector::default(),
             palette: Palette::default(),
+            tuning: Tuning::default(),
         }
     }
 
@@ -371,7 +437,7 @@ impl Hyperspace {
         self.glow = vec![[0.0; 3]; n];
         self.scratch = vec![[0.0; 3]; n];
         self.pixels = vec![[0; 3]; n];
-        let count = (n / 45).clamp(60, 900);
+        let count = ((n as f32 / 45.0 * self.tuning.stars) as usize).clamp(30, 900);
         self.stars = (0..count).map(|_| self.new_star(true)).collect();
     }
 
@@ -451,7 +517,7 @@ impl Hyperspace {
             self.hue = (self.hue + 1) % 6;
             self.glitch = 0.25;
             self.spawn_ring(1.0);
-            let count = 30 + (90.0 * self.energy) as usize;
+            let count = ((30.0 + 90.0 * self.energy) * self.tuning.particles) as usize;
             self.burst(count, 0.6 + self.energy);
             let kick = 0.01 + 0.03 * self.bass;
             self.shake = (self.rng.range(-kick, kick), self.rng.range(-kick, kick));
@@ -591,7 +657,7 @@ impl Hyperspace {
             return;
         }
         // Persistence: the previous frame fades, leaving motion trails.
-        let fade = (-self.dt * 9.0).exp();
+        let fade = (-self.dt * self.tuning.fade_rate).exp();
         for c in &mut self.light {
             for v in c.iter_mut() {
                 *v *= fade;
@@ -605,7 +671,9 @@ impl Hyperspace {
         let cy = h as f32 / 2.0 + self.shake.1 * s;
         let to_px = |u: f32, v: f32| (cx + u * s, cy + v * s);
 
-        self.draw_nebula(cx, cy, s);
+        if self.tuning.nebula {
+            self.draw_nebula(cx, cy, s);
+        }
         self.draw_stars(cx, cy, s);
         self.draw_corona(&to_px);
         self.draw_scope(&to_px);
@@ -796,18 +864,23 @@ impl Hyperspace {
         let (w, h) = (self.w, self.h);
         let radius = ((s / 40.0) as usize).clamp(1, 6);
         // Separable box blur of the light into `glow`.
-        box_blur(&self.light, &mut self.scratch, w, h, radius, true);
-        box_blur(&self.scratch, &mut self.glow, w, h, radius, false);
+        if self.tuning.bloom {
+            box_blur(&self.light, &mut self.scratch, w, h, radius, true);
+            box_blur(&self.scratch, &mut self.glow, w, h, radius, false);
+        } else {
+            self.glow.iter_mut().for_each(|g| *g = [0.0; 3]);
+        }
         let strength = 0.9 + 0.8 * self.flash;
         let bg = self.palette.bg;
-        let quantise = |v: f32| ((v.clamp(0.0, 1.0) * 255.0) as u8) & !3;
+        let mask = !((1u8 << self.tuning.quant_shift) - 1);
+        let quantise = |v: f32| ((v.clamp(0.0, 1.0) * 255.0) as u8) & mask;
         let background = bg.map(quantise);
         for i in 0..w * h {
             let total: f32 = (0..3)
                 .map(|ch| self.light[i][ch] + self.glow[i][ch] * strength)
                 .sum();
             // Near-black is exactly the background, so empty space never needs redrawing.
-            if total < 0.03 {
+            if total < self.tuning.floor {
                 self.pixels[i] = background;
                 continue;
             }
@@ -818,7 +891,11 @@ impl Hyperspace {
                 // Quantise so slowly fading pixels change less often.
                 out[ch] = quantise(v);
             }
-            self.pixels[i] = out;
+            let shown = self.pixels[i];
+            let moved = (0..3).any(|ch| out[ch].abs_diff(shown[ch]) > self.tuning.hysteresis);
+            if moved {
+                self.pixels[i] = out;
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 //! The terminal user interface (ratatui + crossterm).
 
 pub mod app;
+mod backend;
 mod editing;
 pub mod file_manager;
 pub mod keymap;
@@ -16,8 +17,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ratatui::DefaultTerminal;
+use ratatui::Terminal;
 use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
+
+use crate::platform::FrameWriter;
 
 use crate::session::{self, CloseSignal};
 use app::App;
@@ -69,9 +74,49 @@ impl Autosave {
     }
 }
 
+type Tui = Terminal<backend::FastBackend<FrameWriter>>;
+
+/// Like `ratatui::try_init`, but every frame reaches the console in one write.
+fn init_terminal() -> std::io::Result<Tui> {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        ratatui::restore();
+        previous(info);
+    }));
+    enable_raw_mode()?;
+    execute!(std::io::stdout(), EnterAlternateScreen)?;
+    Terminal::new(backend::FastBackend::new(FrameWriter::stdout()))
+}
+
+/// Lowers the frame rate when the terminal cannot keep up. Drawing includes handing the
+/// frame to the console, which blocks while the terminal is still busy with earlier ones.
+struct FramePacer {
+    /// Smoothed time a draw takes, in seconds.
+    draw_secs: f64,
+}
+
+impl FramePacer {
+    /// Drawing may use about half of each frame; the rest is left for input and audio.
+    const BUDGET: f64 = 0.5;
+    const MIN_FPS: u32 = 10;
+
+    fn record(&mut self, took: Duration) {
+        self.draw_secs = self.draw_secs * 0.85 + took.as_secs_f64() * 0.15;
+    }
+
+    /// The frame rate to use: `wanted`, or less if draws are slow.
+    fn fps(&self, wanted: u32) -> u32 {
+        if self.draw_secs <= 0.0 {
+            return wanted;
+        }
+        let sustainable = (Self::BUDGET / self.draw_secs) as u32;
+        wanted.min(sustainable.max(Self::MIN_FPS))
+    }
+}
+
 /// Runs the TUI until the user quits. The terminal is restored on exit and on panic.
 pub fn run(app: &mut App, mut autosave: Option<Autosave>) -> anyhow::Result<()> {
-    let mut terminal = ratatui::try_init()?;
+    let mut terminal = init_terminal()?;
     let result = event_loop(&mut terminal, app, autosave.as_mut());
     ratatui::restore();
     if let Some(autosave) = autosave.as_mut() {
@@ -81,16 +126,18 @@ pub fn run(app: &mut App, mut autosave: Option<Autosave>) -> anyhow::Result<()> 
 }
 
 fn event_loop(
-    terminal: &mut DefaultTerminal,
+    terminal: &mut Tui,
     app: &mut App,
     mut autosave: Option<&mut Autosave>,
 ) -> anyhow::Result<()> {
     let mut dirty = true;
     let mut last_draw = Instant::now();
+    let mut pacer = FramePacer { draw_secs: 0.0 };
     while !app.quit {
-        // The frame rate depends on what is on screen (the HYPERSPACE visualizer is capped).
-        let frame_interval =
-            Duration::from_secs_f64(1.0 / f64::from(app.effective_fps().clamp(1, 240)));
+        // The frame rate depends on what is on screen (the HYPERSPACE visualizer is capped)
+        // and on how fast the terminal keeps up.
+        let fps = pacer.fps(app.effective_fps()).clamp(1, 240);
+        let frame_interval = Duration::from_secs_f64(1.0 / f64::from(fps));
         if let Some(autosave) = autosave.as_deref_mut() {
             autosave.tick(app);
         }
@@ -100,7 +147,9 @@ fn event_loop(
         dirty |= app.tick();
         let animating = app.is_animating();
         if dirty || (animating && last_draw.elapsed() >= frame_interval) {
+            let started = Instant::now();
             terminal.draw(|f| views::draw(f, app))?;
+            pacer.record(started.elapsed());
             last_draw = Instant::now();
             dirty = false;
         }
@@ -741,6 +790,162 @@ pub(crate) mod tests {
         type_keys(&mut app, &["v"]);
         assert_eq!(app.visualizer, app::Visualizer::Bars);
         assert_eq!(app.effective_fps(), app.fps);
+    }
+
+    #[test]
+    fn frame_pacer_slows_down_for_a_slow_terminal() {
+        let mut pacer = FramePacer { draw_secs: 0.0 };
+        assert_eq!(pacer.fps(30), 30);
+        for _ in 0..50 {
+            pacer.record(Duration::from_millis(2));
+        }
+        assert_eq!(pacer.fps(30), 30, "fast draws keep the full rate");
+        for _ in 0..50 {
+            pacer.record(Duration::from_millis(40));
+        }
+        assert_eq!(pacer.fps(30), 12, "40 ms draws: about half of each frame");
+        for _ in 0..50 {
+            pacer.record(Duration::from_millis(500));
+        }
+        assert_eq!(pacer.fps(30), FramePacer::MIN_FPS);
+    }
+
+    /// Counts what a terminal backend would send to the console.
+    #[derive(Default, Clone)]
+    struct CountingWriter {
+        bytes: std::rc::Rc<std::cell::Cell<usize>>,
+        writes: std::rc::Rc<std::cell::Cell<usize>>,
+        colours: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+
+    impl std::io::Write for CountingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes.set(self.bytes.get() + buf.len());
+            self.writes.set(self.writes.get() + 1);
+            // 24-bit colours sent (foreground or background).
+            let n = buf
+                .windows(5)
+                .filter(|w| *w == b"38;2;" || *w == b"48;2;")
+                .count();
+            self.colours.set(self.colours.get() + n);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Terminal output per HYPERSPACE frame: the old path (ratatui's crossterm backend, no
+    /// tuning, stdout's 1 KiB line buffer) against what the app uses now.
+    /// `cargo test --release --lib hyperspace_terminal_load -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn hyperspace_terminal_load() {
+        use crate::hyperspace::Tuning;
+        let preset = |name| Tuning::preset(name).unwrap();
+        let untuned = Tuning {
+            hysteresis: 0,
+            quant_shift: 2,
+            ..preset("balanced")
+        };
+        let rows = [
+            ("old path", untuned, false),
+            ("new, high", preset("high"), true),
+            ("new, balanced", preset("balanced"), true),
+            ("new, fast", preset("fast"), true),
+        ];
+        for (w, h) in [(120u16, 34u16), (200, 55)] {
+            for (name, tuning, fast) in rows {
+                let (bytes, writes, colours) = terminal_load(tuning, w, h, fast);
+                println!(
+                    "{w}x{h} {name:<14} {bytes:>7} B/frame {colours:>5} colours sent {writes:>4} writes  ~{:.2} MB/s @30fps",
+                    (bytes * 30) as f64 / 1e6
+                );
+            }
+        }
+    }
+
+    /// Busy synthetic music for frame `i`: a kick every half second at 30 fps.
+    fn busy_frame(app: &mut App, i: usize) {
+        let kick = if i.is_multiple_of(15) { 0.4 } else { 0.0 };
+        let bands: Vec<f32> = (0..48)
+            .map(|k| {
+                let wobble = 0.25 * (i as f32 * 0.37 + k as f32 * 0.7).sin();
+                (0.55 + wobble + if k < 8 { kick } else { 0.0 }).clamp(0.0, 1.0)
+            })
+            .collect();
+        let wave: Vec<f32> = (0..256)
+            .map(|n| (n as f32 * 0.13 + i as f32 * 0.9).sin() * 0.6)
+            .collect();
+        app.hyperspace.update(
+            1.0 / 30.0,
+            &bands,
+            &wave,
+            Some((1, "Benchmark Artist - Benchmark")),
+            true,
+        );
+    }
+
+    /// Steady-state terminal output per frame: (bytes, console writes, colours sent).
+    /// `fast` selects the app's backend and frame-sized writes; otherwise ratatui's crossterm
+    /// backend behind a 1 KiB line buffer like `std::io::stdout()`.
+    fn terminal_load(
+        tuning: crate::hyperspace::Tuning,
+        w: u16,
+        h: u16,
+        fast: bool,
+    ) -> (usize, usize, usize) {
+        use ratatui::backend::{Backend, CrosstermBackend};
+        use ratatui::layout::Rect;
+        use ratatui::{TerminalOptions, Viewport};
+
+        fn run<B: Backend>(
+            terminal: &mut Terminal<B>,
+            app: &mut App,
+            counter: &CountingWriter,
+            frames: usize,
+        ) -> (usize, usize, usize) {
+            let mut start = (0, 0, 0);
+            for i in 0..(frames + 60) {
+                busy_frame(app, i);
+                terminal.draw(|f| views::draw(f, app)).ok();
+                if i == 59 {
+                    // Skip the opening hyperspace jump: measure the steady state.
+                    start = (
+                        counter.bytes.get(),
+                        counter.writes.get(),
+                        counter.colours.get(),
+                    );
+                }
+            }
+            (
+                (counter.bytes.get() - start.0) / frames,
+                (counter.writes.get() - start.1) / frames,
+                (counter.colours.get() - start.2) / frames,
+            )
+        }
+
+        ratatui::crossterm::style::Colored::set_ansi_color_disabled(false);
+        let mut app = test_app(sample_root());
+        app.visualizer = app::Visualizer::Hyperspace;
+        app.view = app::View::Visualizer;
+        app.hyperspace.tuning = tuning;
+        let options = TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, w, h)),
+        };
+        let counter = CountingWriter::default();
+        if fast {
+            let writer = std::io::BufWriter::with_capacity(1 << 20, counter.clone());
+            let mut terminal =
+                Terminal::with_options(backend::FastBackend::new(writer), options).unwrap();
+            run(&mut terminal, &mut app, &counter, 150)
+        } else {
+            let writer = std::io::LineWriter::with_capacity(1024, counter.clone());
+            let mut terminal =
+                Terminal::with_options(CrosstermBackend::new(writer), options).unwrap();
+            run(&mut terminal, &mut app, &counter, 150)
+        }
     }
 
     /// `cargo test --release --lib hyperspace_frame_cost -- --ignored --nocapture`
