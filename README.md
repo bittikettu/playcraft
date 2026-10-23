@@ -193,7 +193,7 @@ tests/fixtures/generate.ps1                  # regenerate audio fixtures (needs 
 
 None of the tests need a sound card.
 
-The terminal backend (`src/ui/backend.rs`) sends only the colours that changed, and each frame is written to the console in a single call. A test replays its output through a terminal emulator (`vt100`) and checks that every cell matches. To measure how much a visualiser sends to the terminal:`cargo test --release --lib hyperspace_terminal_load -- --ignored --nocapture`. The audio pipeline is tested by pulling samples from the renderer exactly as the device callback would. This proves, for example, that a split FLAC file plays back gaplessly and sample-identical to the original.
+The terminal backend (`src/ui/backend.rs`) sends only the colours that changed, and each frame is written to the console in a single call. A test replays its output through a terminal emulator (`vt100`) and checks that every cell matches. To measure how much a visualiser sends to the terminal: `cargo test --release --lib hyperspace_terminal_load -- --ignored --nocapture`. The audio pipeline is tested by pulling samples from the renderer exactly as the device callback would. This proves, for example, that a split FLAC file plays back gaplessly and sample-identical to the original.
 
 ## License
 
