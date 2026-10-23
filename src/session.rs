@@ -35,6 +35,9 @@ pub struct Session {
     pub repeat: RepeatMode,
     #[serde(default)]
     pub file_manager_dir: Option<PathBuf>,
+    /// The play queue.
+    #[serde(default)]
+    pub queue: Vec<TrackRef>,
 }
 
 impl Session {
@@ -52,6 +55,7 @@ impl Session {
             play_mode: PlayMode::default(),
             repeat: RepeatMode::default(),
             file_manager_dir: None,
+            queue: Vec::new(),
         }
     }
 

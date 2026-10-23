@@ -56,6 +56,7 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, compact: bool) {
             (Action::SeekForward, "Seek"),
             (Action::VolumeUp, "Vol"),
             (Action::Activate, "Play"),
+            (Action::Enqueue, "Queue"),
             (Action::Help, "Help"),
             (Action::Quit, "Quit"),
         ],

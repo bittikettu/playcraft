@@ -28,6 +28,11 @@ impl App {
         if self.playing.is_some() {
             s.position_ms = self.audio.shared().position().as_millis() as u64;
         }
+        s.queue = self
+            .queue
+            .iter()
+            .filter_map(|&u| self.root.locate(u))
+            .collect();
         s.play_mode = self.play_mode;
         s.repeat = self.repeat;
         if let Location::Dir(d) = &self.fm.location {
@@ -64,6 +69,12 @@ impl App {
             self.cwd = session.cwd;
         }
         self.cursor = session.cursor;
+        self.queue = session
+            .queue
+            .iter()
+            .filter_map(|r| self.root.track(r))
+            .map(|t| t.uid)
+            .collect();
         self.request_all_metadata();
 
         let track = session

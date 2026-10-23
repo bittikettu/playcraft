@@ -27,6 +27,10 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
   - play modes *Group*, *All*, *Shuffle groups* and *Shuffle all*;
   - a shuffle switch for each group;
   - repeat track, group or all.
+- **Play queue:** line up tracks (or whole groups) to play next.
+  - Queued tracks show their place (`Q1`, `Q2`…) in the playlist, and Now Playing shows what comes next.
+  - When the queue runs out, normal order resumes from where it was before the queue.
+  - The queue is kept between sessions.
 - **File manager:**
   - drive list on Windows, hidden-file filter;
   - select by glob (`*.flac`) or regex (`re:^0[1-5]`);
@@ -98,6 +102,7 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 | File manager (add files) | F1 | `a` |
 | Create group | F2 | `g` |
 | Load / save playlist | F3 / F4 | |
+| Queue track or group / show queue / clear queue | Ins | `e` / `u` / `X` |
 | Search / filter | `/` | `/` |
 | Volume down / up | `<` / `>` | `-` / `+` (also `=`) |
 | Help / message log | `?` / `L` | |
@@ -110,6 +115,12 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 - Enter plays a track or opens a group; Backspace goes up a level.
 - `R` renames a group, `d`/Del removes an item (groups are confirmed first), and `K`/`J` move an item up or down.
 - `m` cycles the play mode, `r` the repeat mode, and `z` toggles shuffle for the current group.
+- `e` or Ins queues the track under the cursor; pressing it again takes the track out of the queue. On a group, it queues all of the group's tracks.
+
+**Play queue** (`u`):
+- Enter plays the selected track now, and `K`/`J` move it.
+- `d` removes a track, `X` clears the queue, and Esc closes the list.
+- Playback keys keep working while the list is open.
 
 **File manager:**
 - Enter, `l` or Right opens a folder (or adds a file); Backspace, `h` or Left goes up. Above `C:\`, the drive list appears.
@@ -180,7 +191,7 @@ next_track = ["n", "6"]
 - **Groups:** groups gain a `shuffle` flag, and the original MP3Blaster play modes are added.
 - **Themes:** the default is Dracula instead of `classic_blue`. The spec's four themes are kept, five VS Code themes are added, and there is an in-app picker (`t`).
 - **Additions:**
-  - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `v`, `m`, `r`, `z`, `R`, `d`, `K`/`J`;
+  - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `v`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, and the play queue (`e`/Ins, `u`, `X`);
   - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`;
   - the `[keybindings.file_manager]` section.
 - **Key conflict:** the spec's UI mockup shows F1 as Help, but its key table says F1 opens the file manager. The key table wins, so Help is `?`.

@@ -72,6 +72,14 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, with_spectrum: bool) {
             }
         }
     }
+    // What plays next: the gapless successor, or the head of the queue while stopped.
+    let next = app
+        .pending_next
+        .or_else(|| app.queue.first().copied())
+        .and_then(|u| app.root.track_by_uid(u));
+    if let Some(next) = next {
+        lines.push(field("Next:   ", next.display_name()));
+    }
 
     // Bottom-anchored status lines.
     let status = app.status();

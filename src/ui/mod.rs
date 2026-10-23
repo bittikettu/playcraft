@@ -9,6 +9,7 @@ mod persistence;
 mod playback;
 mod playlist_io;
 pub mod prompt;
+mod queue;
 pub mod theme;
 mod theme_picker;
 mod views;
@@ -548,6 +549,69 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn queue_shows_in_the_playlist_and_is_edited_in_its_list() {
+        let mut app = test_app(sample_root());
+        let (black_dog, highway) = (app.root.tracks[0].uid, app.root.tracks[1].uid);
+        // Rows: the group, Black Dog, Highway Star, Money (missing).
+        app.cursor = 2;
+        type_keys(&mut app, &["e", "Up", "Insert", "Down", "Down", "e"]);
+        assert_eq!(
+            app.queue,
+            [highway, black_dog],
+            "the missing track is not queued"
+        );
+        app.pending_next = Some(highway);
+        let screen = render(&mut app, 100, 24);
+        println!("{screen}");
+        assert!(screen.contains("Q2 "), "queue position next to Black Dog");
+        assert!(screen.contains("Q1 "));
+        assert!(screen.contains("Next:   Deep Purple"));
+
+        type_keys(&mut app, &["u"]);
+        let screen = render(&mut app, 100, 24);
+        println!("{screen}");
+        assert!(screen.contains("Play queue (2)"));
+        assert!(screen.contains(" 1. Deep Purple - Highway Star"));
+        assert!(screen.contains("continues in normal order"));
+
+        // Reorder, remove, and close; playlist keys work in the list.
+        type_keys(&mut app, &["J"]);
+        assert_eq!(app.queue, [black_dog, highway]);
+        assert_eq!(app.overlay, app::Overlay::Queue { cursor: 1 });
+        type_keys(&mut app, &["d"]);
+        assert_eq!(app.queue, [black_dog]);
+        type_keys(&mut app, &["X"]);
+        assert!(app.queue.is_empty());
+        let screen = render(&mut app, 100, 24);
+        assert!(screen.contains("The queue is empty"));
+        type_keys(&mut app, &["Esc"]);
+        assert_eq!(app.overlay, app::Overlay::None);
+    }
+
+    #[test]
+    fn the_queue_survives_a_restart() {
+        let mut app = test_app(sample_root());
+        let (black_dog, yes) = (app.root.tracks[0].uid, app.root.subgroups[0].tracks[0].uid);
+        app.queue = vec![yes, black_dog];
+        let json = app.snapshot().to_json();
+        let session: crate::session::Session = serde_json::from_str(&json).unwrap();
+        let mut restored = test_app(Group::new(0, "Root"));
+        restored.restore(session, false, false, false);
+        let paths: Vec<_> = restored
+            .queue
+            .iter()
+            .map(|&u| restored.root.track_by_uid(u).unwrap().path.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                std::path::PathBuf::from("yes.flac"),
+                "Led Zeppelin - Black Dog.mp3".into()
+            ]
+        );
+    }
+
+    #[test]
     fn spectrum_bars_and_log_overlay_render() {
         let mut app = test_app(sample_root());
         let tone: Vec<f32> = (0..4096)
@@ -567,7 +631,8 @@ pub(crate) mod tests {
         crate::log_ring::init(log::LevelFilter::Debug, None);
         log::warn!("spectrum test warning");
         type_keys(&mut app, &["L"]);
-        let screen = render(&mut app, 100, 30);
+        // Tall, because tests running in parallel log into the same ring meanwhile.
+        let screen = render(&mut app, 100, 300);
         assert!(screen.contains("Message log"));
         assert!(screen.contains("spectrum test warning"));
         type_keys(&mut app, &["Esc"]);

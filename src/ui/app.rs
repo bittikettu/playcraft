@@ -123,6 +123,10 @@ pub enum Overlay {
         cursor: usize,
         original: &'static str,
     },
+    /// The play queue; `cursor` indexes `App::queue`.
+    Queue {
+        cursor: usize,
+    },
 }
 
 /// A row of the playlist view: subgroups are listed before tracks.
@@ -172,7 +176,13 @@ pub struct App {
     /// Last track that played, to resume from after Stop.
     pub last_played: Option<u64>,
     pub(crate) pending_load: Option<u64>,
-    pub(crate) pending_queue: Option<u64>,
+    /// The track sent to the audio thread to follow the playing one gaplessly.
+    pub(crate) pending_next: Option<u64>,
+    /// Tracks the user queued to play next, in order; normal play order resumes after them.
+    pub queue: Vec<u64>,
+    /// The last track played in normal order (or picked by the user). Queued tracks do not
+    /// move it, so the play order continues from here once the queue is empty.
+    pub(crate) order_pos: Option<u64>,
     pub now: Option<NowPlaying>,
     pub banner: Option<Banner>,
     pub play_mode: PlayMode,
@@ -225,7 +235,9 @@ impl App {
             playing: None,
             last_played: None,
             pending_load: None,
-            pending_queue: None,
+            pending_next: None,
+            queue: Vec::new(),
+            order_pos: None,
             now: None,
             banner: None,
             play_mode: PlayMode::default(),
@@ -520,7 +532,12 @@ impl App {
             }
             return;
         }
-        let Some(action) = self.keymap.lookup(self.context(), &key) else {
+        // The queue is edited with the playlist's keys, whichever view it was opened from.
+        let context = match self.overlay {
+            Overlay::Queue { .. } => Context::Playlist,
+            _ => self.context(),
+        };
+        let Some(action) = self.keymap.lookup(context, &key) else {
             return;
         };
         let (scroll, is_log) = match self.overlay {
@@ -528,6 +545,7 @@ impl App {
             Overlay::Themes { cursor, original } => {
                 return self.on_theme_key(action, cursor, original);
             }
+            Overlay::Queue { cursor } => return self.on_queue_key(action, cursor),
             Overlay::Help { scroll } => (scroll, false),
             // The log scrolls up from its newest line, so "up" means older.
             Overlay::Log { scroll } => (scroll, true),
@@ -610,6 +628,9 @@ impl App {
                 self.requeue();
             }
             Action::ToggleGroupShuffle => self.toggle_group_shuffle(),
+            Action::Enqueue => self.enqueue_at_cursor(),
+            Action::ShowQueue => self.overlay = Overlay::Queue { cursor: 0 },
+            Action::ClearQueue => self.clear_queue(),
             Action::FileManager => self.open_file_manager(FmMode::AddFiles),
             Action::NewGroup => {
                 self.prompt = Some(Prompt::new(PromptKind::NewGroup, "New group name: ", ""));

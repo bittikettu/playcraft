@@ -98,6 +98,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
         let is_cursor = focused && i == app.cursor;
         let marker = if is_cursor { app.symbols.cursor } else { " " };
         let number = format!("{marker}{:0digits$}. ", i + 1);
+        let mut tag = String::new();
         let (text, right, mut style) = match *row {
             Row::Group(g) => {
                 let sub = &group.subgroups[g];
@@ -120,6 +121,9 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
                         .map(|d| format!("[{}]", format_time(d)))
                         .unwrap_or_default()
                 };
+                if let Some(n) = app.queue_position(track.uid) {
+                    tag = format!("Q{n} ");
+                }
                 let style = if !track.is_playable() {
                     theme.missing
                 } else if app.playing == Some(track.uid) {
@@ -133,13 +137,22 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
         if is_cursor {
             style = style.patch(theme.cursor);
         }
+        let right = format!("{tag}{right}");
         let body = justify(
             &text,
             &right,
             width.saturating_sub(number.len()),
             app.symbols.ellipsis,
         );
-        lines.push(Line::styled(format!("{number}{body}"), style));
+        // The queue position stands out in the key colour.
+        match body.strip_suffix(right.as_str()) {
+            Some(left) if !tag.is_empty() => lines.push(Line::from(vec![
+                Span::styled(format!("{number}{left}"), style),
+                Span::styled(tag.clone(), style.patch(theme.key)),
+                Span::styled(right[tag.len()..].to_string(), style),
+            ])),
+            _ => lines.push(Line::styled(format!("{number}{body}"), style)),
+        }
     }
     f.render_widget(Paragraph::new(lines), list);
 }

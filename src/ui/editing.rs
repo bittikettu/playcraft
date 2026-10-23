@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use crate::audio::AudioCommand;
 use crate::library::fs_browser::{self, EntryKind};
 use crate::model::{Group, Track, TrackMetadata};
-use crate::playlist::engine::PlayState;
 
 use super::app::{App, BannerLevel, FolderScan, Row, View};
 use super::file_manager::FmMode;
@@ -167,15 +166,7 @@ impl App {
     /// Applies a removal to the group tree, keeping playback continuous: if the playing
     /// track disappears, its successor (computed beforehand) stays queued.
     fn remove_tracks(&mut self, mut edit: impl FnMut(&mut Group, &[usize])) {
-        let follow = self.playing.and_then(|p| {
-            let st = PlayState {
-                root: &self.root,
-                mode: self.play_mode,
-                repeat: self.repeat,
-                version: self.version,
-            };
-            self.engine.successor(&st, p)
-        });
+        let follow = self.playing.and_then(|p| self.up_next(Some(p), true));
         fn apply(
             g: &mut Group,
             path: &mut Vec<usize>,
@@ -192,8 +183,11 @@ impl App {
         self.version += 1;
         let playing_gone = self.playing.is_some_and(|p| self.root.locate(p).is_none());
         if playing_gone {
-            let next = follow.filter(|&u| self.root.locate(u).is_some());
-            self.pending_queue = next;
+            self.prune_queue();
+            let next = follow
+                .filter(|&u| self.root.locate(u).is_some())
+                .or_else(|| self.queue.first().copied());
+            self.pending_next = next;
             let path = next
                 .and_then(|u| self.root.track_by_uid(u))
                 .map(|t| t.path.clone());

@@ -9,6 +9,7 @@ mod log;
 mod now_playing;
 mod playlist;
 mod progress;
+mod queue;
 mod spectrum;
 mod status_bar;
 mod themes;
@@ -87,6 +88,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
         Overlay::Help { scroll } => help::draw(f, app, centered(area, 80, 85), scroll),
         Overlay::Log { scroll } => log::draw(f, app, centered(area, 90, 85), scroll),
         Overlay::Themes { cursor, original } => themes::draw(f, app, area, cursor, original),
+        Overlay::Queue { cursor } => queue::draw(f, app, centered(area, 70, 70), cursor),
         Overlay::None => {}
     }
 }
