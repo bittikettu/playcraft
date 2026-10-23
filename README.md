@@ -45,6 +45,8 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
     - beat detection with a live BPM readout, where each beat fires a shockwave and a particle burst;
     - a hyperspace jump on every new track, with the title flying in as glowing pixel text.
 
+    The scene adapts to its size. Small windows and the wide strip get a crisp version without glow or trails, with fewer sphere points. The strip spreads the scene sideways.
+
     How much the terminal has to draw is tunable with `hyperspace_quality = "high" | "balanced" | "fast"` (default `balanced`). If the terminal still can't keep up, the frame rate drops by itself.
 - **ReplayGain** (track or album, limited to avoid clipping) and logarithmic, click-free volume.
 - **Audio device handling:** device unplugged → playback pauses with a banner and resumes when the device returns. Windows default device changes → playback follows.

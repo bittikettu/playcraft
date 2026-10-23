@@ -283,6 +283,43 @@ pub struct Hyperspace {
     pub beat: BeatDetector,
     pub palette: Palette,
     pub tuning: Tuning,
+    /// Plot whole pixels this frame (see `Lod::crisp`).
+    crisp: bool,
+    /// Light that lasts only one frame (static elements when they do not persist).
+    frame: Vec<Rgb>,
+    /// `light + frame`, the input of the bloom.
+    sum: Vec<Rgb>,
+    /// Where `add` currently draws: the per-frame buffer instead of the persistent one.
+    to_frame: bool,
+    /// Title pixels of this frame (x, y, colour, alpha), stamped over the final image.
+    title_px: Vec<(usize, usize, Rgb, f32)>,
+}
+
+/// Below this size (the smaller side, in pixels) the scene is drawn in its crisp form.
+const CRISP_BELOW: f32 = 56.0;
+
+/// Level of detail for the current size: small screens get fewer, crisper elements instead
+/// of a glowing blur, and wide strips spread the scene sideways.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Lod {
+    /// Plot whole pixels instead of soft sub-pixel splats.
+    pub crisp: bool,
+    /// Bloom blur radius in pixels (0 = no glow).
+    pub bloom_radius: usize,
+    pub nebula: bool,
+    /// The circular oscilloscope (too small to read on tiny screens).
+    pub scope: bool,
+    /// Draw every n-th point of the sphere, so points never pile up into a blob.
+    pub sphere_step: usize,
+    /// Pixel title scale (0 = not shown).
+    pub title_scale: usize,
+    /// Horizontal stretch of the corona, rings and sparks in wide strips (1.0 = round).
+    pub stretch: f32,
+    /// Trail fade speed multiplier (shorter trails when crisp).
+    pub fade: f32,
+    /// Whether the corona, oscilloscope and sphere leave trails too. On small and medium
+    /// screens they are drawn fresh each frame, so they stay sharp instead of piling up.
+    pub persist_static: bool,
 }
 
 /// Knobs that trade looks for terminal output.
@@ -308,7 +345,7 @@ pub struct Tuning {
 
 impl Tuning {
     /// Quality presets. Measured at 200x55 cells with busy music, terminal output per frame:
-    /// `high` ~140 KB, `balanced` ~72 KB, `fast` ~35 KB (untuned, with ratatui's own backend:
+    /// `high` ~150 KB, `balanced` ~80 KB, `fast` ~38 KB (untuned, with ratatui's own backend:
     /// ~285 KB). See `hyperspace_terminal_load` in `ui/mod.rs`.
     pub const PRESETS: &[&str] = &["high", "balanced", "fast"];
 
@@ -418,6 +455,11 @@ impl Hyperspace {
             beat: BeatDetector::default(),
             palette: Palette::default(),
             tuning: Tuning::default(),
+            crisp: false,
+            frame: Vec::new(),
+            sum: Vec::new(),
+            to_frame: false,
+            title_px: Vec::new(),
         }
     }
 
@@ -436,6 +478,8 @@ impl Hyperspace {
         self.light = vec![[0.0; 3]; n];
         self.glow = vec![[0.0; 3]; n];
         self.scratch = vec![[0.0; 3]; n];
+        self.frame = vec![[0.0; 3]; n];
+        self.sum = vec![[0.0; 3]; n];
         self.pixels = vec![[0; 3]; n];
         let count = ((n as f32 / 45.0 * self.tuning.stars) as usize).clamp(30, 900);
         self.stars = (0..count).map(|_| self.new_star(true)).collect();
@@ -452,6 +496,41 @@ impl Hyperspace {
             },
             prev: None,
             tint: (self.rng.next_u64() % 6) as usize,
+        }
+    }
+
+    /// How much detail fits at the current size.
+    pub fn lod(&self) -> Lod {
+        let s = self.w.min(self.h) as f32;
+        let crisp = s < CRISP_BELOW;
+        let bloom_radius = if self.tuning.bloom && s >= 48.0 {
+            ((s / 40.0) as usize).clamp(1, 6)
+        } else {
+            0
+        };
+        // The sphere's disc is about 0.18 s in radius: about one point per two pixels of it.
+        let r = 0.18 * s;
+        let wanted = ((PI * r * r * 0.5) as usize).clamp(48, self.sphere.len().max(48));
+        let sphere_step = self.sphere.len().div_ceil(wanted).max(1);
+        let title_width = self.title.chars().count() * 4;
+        let title_scale = if self.h < 24 {
+            0
+        } else if self.h >= 56 && title_width * 2 + 4 <= self.w {
+            2
+        } else {
+            1
+        };
+        Lod {
+            crisp,
+            bloom_radius,
+            nebula: self.tuning.nebula && s >= 48.0,
+            scope: s >= 40.0,
+            sphere_step,
+            title_scale,
+            // Only real strips: stretching a fullscreen scene costs terminal output for no gain.
+            stretch: ((self.w as f32 / self.h.max(1) as f32) / 2.4).clamp(1.0, 2.5),
+            fade: if crisp { 1.6 } else { 1.0 },
+            persist_static: s >= 90.0,
         }
     }
 
@@ -603,9 +682,25 @@ impl Hyperspace {
 
     // ---- drawing --------------------------------------------------------------------------
 
-    /// Adds light at a sub-pixel position (bilinear splat).
+    /// Adds light at a position: a soft sub-pixel (bilinear) splat, or a whole pixel on
+    /// small screens where soft splats just look blurry.
     fn add(&mut self, x: f32, y: f32, c: Rgb, a: f32) {
         if a.is_nan() || a <= 0.0 || !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        if self.crisp {
+            let (px, py) = (x.round(), y.round());
+            if px >= 0.0 && py >= 0.0 && (px as usize) < self.w && (py as usize) < self.h {
+                let buffer = if self.to_frame {
+                    &mut self.frame
+                } else {
+                    &mut self.light
+                };
+                let cell = &mut buffer[py as usize * self.w + px as usize];
+                cell[0] += c[0] * a;
+                cell[1] += c[1] * a;
+                cell[2] += c[2] * a;
+            }
             return;
         }
         let (x0, y0) = (x.floor(), y.floor());
@@ -621,7 +716,12 @@ impl Hyperspace {
             if px < 0 || py < 0 || px >= self.w as isize || py >= self.h as isize {
                 continue;
             }
-            let cell = &mut self.light[py as usize * self.w + px as usize];
+            let buffer = if self.to_frame {
+                &mut self.frame
+            } else {
+                &mut self.light
+            };
+            let cell = &mut buffer[py as usize * self.w + px as usize];
             let k = a * wgt;
             cell[0] += c[0] * k;
             cell[1] += c[1] * k;
@@ -642,11 +742,11 @@ impl Hyperspace {
         }
     }
 
-    fn circle(&mut self, cx: f32, cy: f32, r: f32, c: Rgb, a: f32) {
-        let steps = ((TAU * r).ceil() as usize).clamp(8, 4000);
+    fn ellipse(&mut self, cx: f32, cy: f32, rx: f32, ry: f32, c: Rgb, a: f32) {
+        let steps = ((TAU * rx.max(ry)).ceil() as usize).clamp(8, 4000);
         for i in 0..steps {
             let th = i as f32 / steps as f32 * TAU;
-            self.add(cx + r * th.cos(), cy + r * th.sin(), c, a);
+            self.add(cx + rx * th.cos(), cy + ry * th.sin(), c, a);
         }
     }
 
@@ -656,8 +756,10 @@ impl Hyperspace {
         if w == 0 || h == 0 {
             return;
         }
+        let lod = self.lod();
+        self.crisp = lod.crisp;
         // Persistence: the previous frame fades, leaving motion trails.
-        let fade = (-self.dt * self.tuning.fade_rate).exp();
+        let fade = (-self.dt * self.tuning.fade_rate * lod.fade).exp();
         for c in &mut self.light {
             for v in c.iter_mut() {
                 *v *= fade;
@@ -669,18 +771,29 @@ impl Hyperspace {
         let s = w.min(h) as f32;
         let cx = w as f32 / 2.0 + self.shake.0 * s;
         let cy = h as f32 / 2.0 + self.shake.1 * s;
-        let to_px = |u: f32, v: f32| (cx + u * s, cy + v * s);
+        // Wide areas stretch the rings, corona and sparks sideways; the sphere stays round.
+        let sx = s * lod.stretch;
+        let to_px = |u: f32, v: f32| (cx + u * sx, cy + v * s);
 
-        if self.tuning.nebula {
-            self.draw_nebula(cx, cy, s);
+        if lod.nebula {
+            self.draw_nebula(cx, cy, s, lod.stretch);
         }
         self.draw_stars(cx, cy, s);
-        self.draw_corona(&to_px);
-        self.draw_scope(&to_px);
-        self.draw_sphere(cx, cy, s);
+        self.frame.iter_mut().for_each(|c| *c = [0.0; 3]);
+        self.to_frame = !lod.persist_static;
+        // Without trails these are not piled up over several frames, so they get a little more
+        // light (but not so much that the colours wash out to white).
+        let gain = if lod.persist_static { 1.0 } else { 1.4 };
+        self.draw_corona(&to_px, s * (1.0 + lod.stretch) / 2.0, gain);
+        if lod.scope {
+            self.draw_scope(&to_px, gain);
+        }
+        self.draw_sphere(cx, cy, s, lod.sphere_step, gain);
+        self.to_frame = false;
         for i in 0..self.rings.len() {
             let r = self.rings[i];
-            self.circle(cx, cy, r.radius * s, r.color, 0.9 * r.life * r.life);
+            let a = 0.9 * r.life * r.life;
+            self.ellipse(cx, cy, r.radius * sx, r.radius * s, r.color, a);
         }
         for i in 0..self.particles.len() {
             let p = self.particles[i];
@@ -689,19 +802,21 @@ impl Hyperspace {
             let (tx, ty) = to_px(p.x - p.vx * 0.04, p.y - p.vy * 0.04);
             self.line((tx, ty), (x, y), (p.color, p.color), 0.5 * a);
         }
-        self.draw_title(s);
-        self.bloom_and_tonemap(s);
+        self.draw_title(s, lod.title_scale);
+        self.bloom_and_tonemap(lod.bloom_radius);
+        self.stamp_title();
     }
 
-    fn draw_nebula(&mut self, cx: f32, cy: f32, s: f32) {
+    fn draw_nebula(&mut self, cx: f32, cy: f32, s: f32, stretch: f32) {
         let radius = 0.55 * s;
+        let rx = radius * stretch;
         let strength = 0.012 + 0.05 * self.bass + 0.03 * self.flash;
         // Coarse steps keep most pixels unchanged between frames (cheaper to draw).
         let strength = (strength * 64.0).round() / 64.0;
         let color = self.color(0);
         let (x0, x1) = (
-            (cx - radius).max(0.0) as usize,
-            ((cx + radius) as usize).min(self.w),
+            (cx - rx).max(0.0) as usize,
+            ((cx + rx) as usize).min(self.w),
         );
         let (y0, y1) = (
             (cy - radius).max(0.0) as usize,
@@ -709,7 +824,8 @@ impl Hyperspace {
         );
         for y in y0..y1 {
             for x in x0..x1 {
-                let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt() / radius;
+                let d =
+                    (((x as f32 - cx) / rx).powi(2) + ((y as f32 - cy) / radius).powi(2)).sqrt();
                 if d < 1.0 {
                     let k = strength * (1.0 - d) * (1.0 - d);
                     let cell = &mut self.light[y * self.w + x];
@@ -740,37 +856,48 @@ impl Hyperspace {
         }
     }
 
-    fn draw_corona(&mut self, to_px: &impl Fn(f32, f32) -> (f32, f32)) {
+    /// `scale` is the ring's average radius unit in pixels (for spacing the spokes).
+    fn draw_corona(&mut self, to_px: &impl Fn(f32, f32) -> (f32, f32), scale: f32, gain: f32) {
         let n = self.bands.len();
         if n == 0 {
             return;
         }
         let spin = self.t * 0.08;
         let pulse = self.beat.pulse;
-        for k in 0..n {
-            let level = self.bands[k];
+        // At most one spoke per ~3.5 pixels of the inner circle, so spokes stay separate rays
+        // instead of merging into a solid band; neighbouring bands are merged by their peak.
+        let spokes = ((PI * 0.29 * scale / 3.5) as usize).clamp(8, n);
+        for j in 0..spokes {
+            let (lo, hi) = (
+                j * n / spokes,
+                ((j + 1) * n / spokes).max(j * n / spokes + 1),
+            );
+            let level = self.bands[lo..hi.min(n)]
+                .iter()
+                .copied()
+                .fold(0.0, f32::max);
             if level <= 0.01 {
                 continue;
             }
-            let offset = (k as f32 + 0.5) / n as f32 * PI;
+            let offset = (j as f32 + 0.5) / spokes as f32 * PI;
             let (inner, outer) = (0.29, 0.29 + level * 0.2 + pulse * 0.02);
             let (c0, c1) = (self.color(2), self.color(1));
             for angle in [PI / 2.0 + offset + spin, PI / 2.0 - offset + spin] {
                 let (dx, dy) = (angle.cos(), angle.sin());
                 let (x0, y0) = to_px(dx * inner, dy * inner);
                 let (x1, y1) = to_px(dx * outer, dy * outer);
-                self.line((x0, y0), (x1, y1), (c0, c1), 0.25 + 0.5 * level);
+                self.line((x0, y0), (x1, y1), (c0, c1), (0.25 + 0.5 * level) * gain);
             }
         }
     }
 
-    fn draw_scope(&mut self, to_px: &impl Fn(f32, f32) -> (f32, f32)) {
+    fn draw_scope(&mut self, to_px: &impl Fn(f32, f32) -> (f32, f32), gain: f32) {
         let n = self.wave.len();
         if n < 2 {
             return;
         }
         let color = self.color(3);
-        let a = 0.35 + 0.6 * self.energy;
+        let a = (0.35 + 0.6 * self.energy) * gain;
         let point = |i: usize, wave: &[f32]| {
             let th = i as f32 / n as f32 * TAU - PI / 2.0;
             let r = 0.245 + wave[i % n].clamp(-1.0, 1.0) * 0.07;
@@ -784,12 +911,12 @@ impl Hyperspace {
         }
     }
 
-    fn draw_sphere(&mut self, cx: f32, cy: f32, s: f32) {
+    fn draw_sphere(&mut self, cx: f32, cy: f32, s: f32, step: usize, gain: f32) {
         let n = self.bands.len();
         let (sy, cyaw) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
         let pulse = self.beat.pulse;
-        for i in 0..self.sphere.len() {
+        for i in (0..self.sphere.len()).step_by(step.max(1)) {
             let p = self.sphere[i];
             // Bass bulges the equator, treble the poles.
             let lat = p[1].abs();
@@ -806,13 +933,14 @@ impl Hyperspace {
             let (px, py) = (cx + x * r * 3.0 / depth * s, cy + y * r * 3.0 / depth * s);
             let front = 1.0 - (z + 1.0) / 2.0;
             let color = mix(self.color(0), self.color(2), lat);
-            self.add(px, py, color, (0.15 + 0.85 * front) * (0.5 + level));
+            self.add(px, py, color, (0.15 + 0.85 * front) * (0.5 + level) * gain);
         }
     }
 
-    fn draw_title(&mut self, s: f32) {
+    fn draw_title(&mut self, s: f32, scale: usize) {
         let age = self.title_age;
-        if age > 6.0 || self.title.is_empty() {
+        self.title_px.clear();
+        if age > 6.0 || self.title.is_empty() || scale == 0 {
             return;
         }
         let alpha = if age < 0.6 {
@@ -823,18 +951,14 @@ impl Hyperspace {
             1.0 - (age - 4.5) / 1.5
         };
         let text: Vec<char> = self.title.chars().collect();
-        let scale = if text.len() * 4 * 2 + 4 <= self.w {
-            2
-        } else {
-            1
-        };
         let max_chars = (self.w.saturating_sub(4)) / (4 * scale);
         let text = &text[..text.len().min(max_chars)];
         let width = text.len() * 4 * scale;
         let x0 = (self.w.saturating_sub(width)) / 2;
         // Slides up into place while fading in.
         let rise = (1.0 - (age / 0.6).min(1.0)) * 0.1 * s;
-        let y0 = (self.h as f32 * 0.82 + rise) as usize;
+        let y0 = ((self.h as f32 * 0.82 + rise) as usize).min(self.h.saturating_sub(5 * scale + 1));
+        self.title_px.clear();
         for (i, &ch) in text.iter().enumerate() {
             let color = self.color(i);
             let rows = glyph(ch);
@@ -853,6 +977,9 @@ impl Hyperspace {
                             let x = (x0 + i * 4 * scale + gx * scale + sx) as isize + jitter;
                             let y = y0 + gy * scale + sy;
                             self.add(x as f32, y as f32, color, 1.1 * alpha);
+                            if x >= 0 && (x as usize) < self.w && y < self.h {
+                                self.title_px.push((x as usize, y, color, alpha));
+                            }
                         }
                     }
                 }
@@ -860,12 +987,18 @@ impl Hyperspace {
         }
     }
 
-    fn bloom_and_tonemap(&mut self, s: f32) {
+    fn bloom_and_tonemap(&mut self, radius: usize) {
         let (w, h) = (self.w, self.h);
-        let radius = ((s / 40.0) as usize).clamp(1, 6);
+        for ((sum, light), frame) in self.sum.iter_mut().zip(&self.light).zip(&self.frame) {
+            *sum = [
+                light[0] + frame[0],
+                light[1] + frame[1],
+                light[2] + frame[2],
+            ];
+        }
         // Separable box blur of the light into `glow`.
-        if self.tuning.bloom {
-            box_blur(&self.light, &mut self.scratch, w, h, radius, true);
+        if radius > 0 {
+            box_blur(&self.sum, &mut self.scratch, w, h, radius, true);
             box_blur(&self.scratch, &mut self.glow, w, h, radius, false);
         } else {
             self.glow.iter_mut().for_each(|g| *g = [0.0; 3]);
@@ -877,7 +1010,7 @@ impl Hyperspace {
         let background = bg.map(quantise);
         for i in 0..w * h {
             let total: f32 = (0..3)
-                .map(|ch| self.light[i][ch] + self.glow[i][ch] * strength)
+                .map(|ch| self.sum[i][ch] + self.glow[i][ch] * strength)
                 .sum();
             // Near-black is exactly the background, so empty space never needs redrawing.
             if total < self.tuning.floor {
@@ -886,7 +1019,7 @@ impl Hyperspace {
             }
             let mut out = [0u8; 3];
             for ch in 0..3 {
-                let x = self.light[i][ch] + self.glow[i][ch] * strength;
+                let x = self.sum[i][ch] + self.glow[i][ch] * strength;
                 let v = bg[ch] + (1.0 - bg[ch]) * (1.0 - (-x * 1.3).exp());
                 // Quantise so slowly fading pixels change less often.
                 out[ch] = quantise(v);
@@ -896,6 +1029,44 @@ impl Hyperspace {
             if moved {
                 self.pixels[i] = out;
             }
+        }
+    }
+
+    /// Draws the title over the finished image with a dark outline, so it stays readable over
+    /// the busy middle of the scene (its light has already gone into the glow).
+    fn stamp_title(&mut self) {
+        if self.title_px.is_empty() {
+            return;
+        }
+        let (w, h) = (self.w as isize, self.h as isize);
+        let bg = self.palette.bg;
+        let mask = !((1u8 << self.tuning.quant_shift) - 1);
+        let quantise = |v: f32| ((v.clamp(0.0, 1.0) * 255.0) as u8) & mask;
+        let blend = |shown: [u8; 3], to: Rgb, a: f32| {
+            [0, 1, 2].map(|ch| quantise(shown[ch] as f32 / 255.0 * (1.0 - a) + to[ch] * a))
+        };
+        for &(x, y, _, alpha) in &self.title_px {
+            for (dx, dy) in [
+                (-1, -1),
+                (0, -1),
+                (1, -1),
+                (-1, 0),
+                (1, 0),
+                (-1, 1),
+                (0, 1),
+                (1, 1),
+            ] {
+                let (nx, ny) = (x as isize + dx, y as isize + dy);
+                if nx >= 0 && ny >= 0 && nx < w && ny < h {
+                    let i = ny as usize * self.w + nx as usize;
+                    self.pixels[i] = blend(self.pixels[i], bg, 0.85 * alpha);
+                }
+            }
+        }
+        for &(x, y, color, alpha) in &self.title_px {
+            let i = y * self.w + x;
+            // A hot core: the neon colour pushed a little towards white.
+            self.pixels[i] = blend(self.pixels[i], mix(color, [1.0; 3], 0.2), alpha);
         }
     }
 
@@ -975,6 +1146,140 @@ mod tests {
             .filter(|&f| beat.update(f as f32 / 60.0, 1.0 / 60.0, 0.7))
             .count();
         assert_eq!(beats, 0);
+    }
+
+    /// Writes frames as PPM images (one pixel per framebuffer pixel) to `HYPERSPACE_PPM_DIR`,
+    /// with a music-like spectrum: louder bass, a kick every 0.5 s.
+    /// `HYPERSPACE_PPM_DIR=dir cargo test --release --lib hyperspace_ppm_dump -- --ignored`
+    #[test]
+    #[ignore]
+    fn hyperspace_ppm_dump() {
+        let Ok(dir) = std::env::var("HYPERSPACE_PPM_DIR") else {
+            return;
+        };
+        for (w, h) in [(118, 18), (78, 32), (118, 64), (200, 110)] {
+            let mut hs = Hyperspace::new(11);
+            hs.resize(w, h);
+            let mut rng = Rng(7);
+            for frame in 0..150 {
+                let t = frame as f32 / 30.0;
+                let kick = (-(t % 0.5) * 12.0).exp();
+                let bands: Vec<f32> = (0..48)
+                    .map(|b| {
+                        let tilt = 0.75 - 0.5 * b as f32 / 47.0;
+                        (tilt + 0.25 * kick * (1.0 - b as f32 / 47.0) + rng.range(-0.12, 0.12))
+                            .clamp(0.0, 1.0)
+                    })
+                    .collect();
+                let wave: Vec<f32> = (0..256)
+                    .map(|i| (i as f32 * 0.21 + t * 9.0).sin() * 0.5 + rng.range(-0.1, 0.1))
+                    .collect();
+                hs.update(1.0 / 30.0, &bands, &wave, Some((3, "Black Dog")), true);
+                hs.render();
+            }
+            let mut out = format!(
+                "P6
+{w} {h}
+255
+"
+            )
+            .into_bytes();
+            for y in 0..h {
+                for x in 0..w {
+                    out.extend_from_slice(&hs.pixel(x, y));
+                }
+            }
+            std::fs::write(format!("{dir}/{w}x{h}.ppm"), out).unwrap();
+        }
+    }
+
+    /// Share of the screen blown out to near-white after a few seconds of busy music.
+    fn washout(w: usize, h: usize) -> f32 {
+        let mut hs = Hyperspace::new(11);
+        hs.resize(w, h);
+        let wave: Vec<f32> = (0..256).map(|i| (i as f32 * 0.21).sin() * 0.6).collect();
+        for frame in 0..120 {
+            let level = if frame % 15 == 0 { 0.95 } else { 0.6 };
+            hs.update(
+                1.0 / 30.0,
+                &[level; 48],
+                &wave,
+                Some((3, "Black Dog")),
+                true,
+            );
+            hs.render();
+        }
+        let white = hs
+            .pixels
+            .iter()
+            .filter(|p| p.iter().all(|&c| c >= 200))
+            .count();
+        white as f32 / (w * h) as f32
+    }
+
+    #[test]
+    fn small_screens_are_not_washed_out() {
+        // Before the level of detail, these were 15-30 % white blobs.
+        for (w, h) in [(118, 18), (78, 32), (118, 64)] {
+            let white = washout(w, h);
+            assert!(
+                white < 0.05,
+                "{w}x{h}: {:.1} % of the screen is white",
+                white * 100.0
+            );
+        }
+    }
+
+    #[test]
+    fn detail_follows_the_screen_size() {
+        let lod = |w, h| {
+            let mut hs = Hyperspace::new(1);
+            hs.resize(w, h);
+            hs.title = "Black Dog".into();
+            hs.lod()
+        };
+        // The wide strip under the playlist: crisp, no glow, no title, spread sideways.
+        let strip = lod(118, 18);
+        assert!(strip.crisp && !strip.nebula && !strip.scope && !strip.persist_static);
+        assert_eq!((strip.bloom_radius, strip.title_scale), (0, 0));
+        assert_eq!(strip.stretch, 2.5);
+        // A small window.
+        let small = lod(78, 32);
+        assert!(small.crisp && small.title_scale == 1 && small.bloom_radius == 0);
+        // A big fullscreen terminal gets everything.
+        let big = lod(200, 110);
+        assert!(!big.crisp && big.nebula && big.scope && big.persist_static);
+        assert!(big.bloom_radius >= 2 && big.title_scale == 2);
+        assert_eq!(big.stretch, 1.0);
+        // Fewer sphere points on smaller screens, so they never merge into a blob.
+        assert!(strip.sphere_step > small.sphere_step && small.sphere_step > big.sphere_step);
+    }
+
+    #[test]
+    fn the_title_is_outlined_over_the_scene() {
+        let mut hs = Hyperspace::new(4);
+        hs.resize(78, 32);
+        for _ in 0..30 {
+            hs.update(1.0 / 30.0, &[0.8; 48], &[], Some((1, "IIII")), true);
+            hs.render();
+        }
+        assert!(!hs.title_px.is_empty());
+        let bg = hs.palette.bg.map(|c| (c * 255.0) as u8);
+        let lit: std::collections::HashSet<_> = hs.title_px.iter().map(|p| (p.0, p.1)).collect();
+        // Every title pixel is bright, and the pixels around the letters are dark.
+        for &(x, y) in &lit {
+            assert!(
+                hs.pixel(x, y).iter().any(|&c| c > 128),
+                "title pixel {x},{y} is dark"
+            );
+            for (nx, ny) in [(x - 1, y), (x + 1, y)] {
+                if !lit.contains(&(nx, ny)) {
+                    let p = hs.pixel(nx, ny);
+                    let near = (0..3).all(|c| p[c].abs_diff(bg[c]) <= 48);
+                    assert!(near, "outline pixel {nx},{ny} is {p:?}");
+                }
+            }
+        }
     }
 
     #[test]
