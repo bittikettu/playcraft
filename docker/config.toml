@@ -1,0 +1,6 @@
+# Settings for the player in the container. /music is the music folder (mount your own).
+[general]
+default_music_dir = "/music"
+
+[mcp]
+library_dirs = ["/music"]

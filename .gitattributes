@@ -5,3 +5,5 @@
 *.wav binary
 *.m4a binary
 
+# Shell scripts run inside Linux containers; keep their line endings Unix-style.
+*.sh text eol=lf

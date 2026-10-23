@@ -69,6 +69,26 @@ cargo build --release
 
 On Windows the C runtime is linked statically (`.cargo/config.toml`). The result is a single `target\release\mp3blaster-rs.exe` with no Visual C++ redistributable needed.
 
+### Docker (Ubuntu)
+
+The `Dockerfile` builds and runs the player on Ubuntu 24.04. It is also a quick way to check the Linux build. Run the commands from the repository folder (PowerShell or cmd on Windows):
+
+```sh
+docker build -t mp3blaster .                                # the player image
+docker build --target test .                                # fmt, clippy and all tests on Linux
+docker run -it --rm mp3blaster                              # play the bundled samples
+docker run -it --rm -v "D:\Music:/music:ro" mp3blaster      # play your own music
+```
+
+- `-it` is required, because the player is a terminal UI.
+- **There is no sound card in a container.** Audio goes to a silent PulseAudio sink that runs in real time, so the progress bar, spectrum and visualizers behave normally, but you hear nothing.
+  - To hear it, set `PULSE_SERVER` to a PulseAudio server outside the container. On a Linux desktop, add `-e PULSE_SERVER=unix:/run/user/1000/pulse/native -v /run/user/1000/pulse:/run/user/1000/pulse`.
+- **Inside the container:**
+  - the music folder is `/music`, which holds the test tones unless you mount your own;
+  - the config is `~/.config/mp3blaster-rs/config.toml`;
+  - nothing is kept after the container exits.
+- **AI control (MCP):** give the container a name with `--name mp3blaster`. Then use `docker exec -i mp3blaster mp3blaster-rs --mcp` as the MCP server command. For Claude Desktop, that is `"command": "docker", "args": ["exec", "-i", "mp3blaster", "mp3blaster-rs", "--mcp"]`.
+
 ## Usage
 
 ```

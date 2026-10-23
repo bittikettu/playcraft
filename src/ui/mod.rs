@@ -408,13 +408,16 @@ pub(crate) mod tests {
     #[test]
     fn ten_thousand_tracks_stay_responsive() {
         let dir = tempfile::tempdir().unwrap();
+        // Not the temp folder itself: its ".tmp…" name counts as hidden on Linux.
+        let music = dir.path().join("music");
+        std::fs::create_dir(&music).unwrap();
         for i in 0..10_000 {
-            std::fs::write(dir.path().join(format!("{i:05}.mp3")), b"").unwrap();
+            std::fs::write(music.join(format!("{i:05}.mp3")), b"").unwrap();
         }
         let mut app = test_app(Group::new(0, "Root"));
-        app.fm = file_manager::FileManager::new(dir.path().parent().unwrap().to_path_buf());
-        app.fm.selected.insert(dir.path().to_path_buf());
-        app.fm.entries.retain(|e| e.path == dir.path());
+        app.fm = file_manager::FileManager::new(dir.path().to_path_buf());
+        app.fm.selected.insert(music.clone());
+        app.fm.entries.retain(|e| e.path == music);
         app.view = app::View::FileManager;
         app.on_action(keymap::Action::AddSelected);
         let deadline = Instant::now() + Duration::from_secs(60);
@@ -1141,14 +1144,22 @@ pub(crate) mod tests {
         assert!(screen.contains("Colour theme"));
         assert!(screen.contains("Dracula") && screen.contains("Tokyo Night"));
 
+        // RGB themes fall back to an ANSI one on terminals without truecolor.
+        let shown = |name| {
+            theme::Theme::by_name(name, theme::supports_truecolor())
+                .0
+                .name
+        };
         // Moving previews immediately; Esc restores the original theme.
         type_keys(&mut app, &["Down"]);
-        assert_eq!(app.theme.name, "tokyo_night");
+        assert_eq!(app.theme.name, shown("tokyo_night"));
         type_keys(&mut app, &["Esc"]);
-        assert_eq!(app.theme.name, "dracula");
+        assert_eq!(app.theme.name, shown("dracula"));
         assert_eq!(app.overlay, app::Overlay::None);
 
-        // Up wraps around to the last theme; Enter keeps it and saves it to the config.
+        // From the first theme, Up wraps around to the last; Enter keeps the one above it
+        // (an ANSI theme, so this works on any terminal) and saves it to the config.
+        app.theme = theme::Theme::dracula();
         type_keys(&mut app, &["t", "Up", "Up", "Enter"]);
         assert_eq!(app.theme.name, "classic_blue");
         let text = std::fs::read_to_string(&config).unwrap();

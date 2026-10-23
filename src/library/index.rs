@@ -202,20 +202,21 @@ fn scan(dirs: &[PathBuf], cache: Option<&Path>, state: &RwLock<IndexState>) {
     }
     publish(&mut batch);
 
-    let json = {
+    // The cache is written before the scan counts as finished.
+    if let Some(file) = cache {
+        let json = serde_json::to_string(&Cache {
+            version: CACHE_VERSION,
+            entries: lock(state).entries.clone(),
+        })
+        .unwrap_or_default();
+        if let Err(e) = crate::session::save_json(file, &json) {
+            log::warn!("library index: cannot save {}: {e}", file.display());
+        }
+    }
+    {
         let mut s = lock(state);
         s.scanning = false;
         s.pending = 0;
-        let cache = Cache {
-            version: CACHE_VERSION,
-            entries: s.entries.clone(),
-        };
-        serde_json::to_string(&cache).unwrap_or_default()
-    };
-    if let Some(file) = cache
-        && let Err(e) = crate::session::save_json(file, &json)
-    {
-        log::warn!("library index: cannot save {}: {e}", file.display());
     }
     log::info!(
         "library index: {} tracks ({unchanged} unchanged, {read} read) in {:.1} s",
