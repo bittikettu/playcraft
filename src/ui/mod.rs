@@ -158,7 +158,9 @@ fn event_loop(
         let timeout = if animating {
             frame_interval.saturating_sub(last_draw.elapsed())
         } else {
-            IDLE_POLL
+            // Wake up exactly when scrolling text moves, so it scrolls evenly.
+            app.marquee_wait()
+                .map_or(IDLE_POLL, |wait| wait.min(IDLE_POLL))
         };
         if event::poll(timeout)? {
             // Handle everything that is queued before the next redraw.
@@ -586,6 +588,50 @@ pub(crate) mod tests {
         assert!(screen.contains("The queue is empty"));
         type_keys(&mut app, &["Esc"]);
         assert_eq!(app.overlay, app::Overlay::None);
+    }
+
+    #[test]
+    fn now_playing_is_a_third_wide_and_scrolls_long_text() {
+        let mut app = test_app(sample_root());
+        let name = "Godspeed You! Black Emperor - Storm (Lift Your Skinny Fists).flac";
+        app.now = Some(app::NowPlaying {
+            track: None,
+            path: name.into(),
+            info: crate::audio::StreamInfo {
+                codec: "flac".into(),
+                sample_rate: 44_100,
+                channels: 2,
+            },
+            duration: None,
+        });
+        let screen = render(&mut app, 120, 30);
+        println!("{screen}");
+        // 40 of 120 columns: the pane's border starts at column 80.
+        let top = screen.lines().next().unwrap();
+        assert_eq!(top.chars().position(|c| c == '┐'), Some(79));
+        // Held still at first, cut off with an ellipsis.
+        let room = 40 - 2 - "Title:  ".len();
+        assert!(screen.contains(&format!("Title:  {}", &name[..room - 1])));
+        assert!(app.marquee_scrolling);
+
+        // After the pause it moves a column every step, and redraws on its own while stopped.
+        app.marquee_since = Instant::now()
+            .checked_sub(Duration::from_millis(2900))
+            .unwrap();
+        assert_eq!(app.marquee_step(), 5);
+        assert!(app.tick(), "scrolling text needs a redraw");
+        assert!(!app.tick(), "but only once per step");
+        let screen = render(&mut app, 120, 30);
+        let moved = views::marquee(name, room, 5, app.symbols.marquee_gap, "…");
+        assert!(moved.starts_with("eed You!"), "{moved:?}");
+        assert!(screen.contains(&format!("Title:  {moved}")));
+        assert!(app.marquee_wait().unwrap() <= Duration::from_millis(200));
+
+        // Short text stands still.
+        app.now.as_mut().unwrap().path = "Money.ogg".into();
+        render(&mut app, 120, 30);
+        assert!(!app.marquee_scrolling);
+        assert_eq!(app.marquee_wait(), None);
     }
 
     #[test]

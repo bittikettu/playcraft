@@ -191,6 +191,7 @@ impl App {
                     info,
                     duration,
                 });
+                self.marquee_since = std::time::Instant::now();
                 self.pending_next = None;
                 self.requeue_after_start();
             }

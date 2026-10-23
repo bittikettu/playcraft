@@ -23,8 +23,10 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::app::{App, Overlay, SpectrumLayout, View};
 
-/// Width of the Now Playing pane; it is hidden on terminals narrower than `SIDE_MIN_WIDTH`.
+/// The Now Playing pane takes a third of the width within these limits; it is hidden on
+/// terminals narrower than `SIDE_MIN_WIDTH`.
 const SIDE_WIDTH: u16 = 28;
+const SIDE_MAX_WIDTH: u16 = 48;
 const SIDE_MIN_WIDTH: u16 = 80;
 /// Main-area height needed before the spectrum gets its own full-width strip.
 const STRIP_MIN_MAIN: u16 = 18;
@@ -32,6 +34,8 @@ const STRIP_MIN_MAIN: u16 = 18;
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
     f.render_widget(Block::new().style(app.theme.base), area);
+    // Set again below if Now Playing is on screen with scrolling text.
+    app.marquee_scrolling = false;
 
     let compact = area.height < 14;
     let bar_height = if compact { 1 } else { 3 };
@@ -57,14 +61,16 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
             };
             let pane_spectrum = !wide && app.spectrum_layout != SpectrumLayout::Off;
             if panes.width >= SIDE_MIN_WIDTH {
-                let [list, side] =
-                    Layout::horizontal([Constraint::Fill(1), Constraint::Length(SIDE_WIDTH)])
-                        .areas(panes);
+                let [list, side] = Layout::horizontal([
+                    Constraint::Fill(1),
+                    Constraint::Length(side_width(panes.width)),
+                ])
+                .areas(panes);
                 playlist::draw(f, app, list, true);
                 if pane_spectrum {
                     app.spectrum.set_band_count(spectrum::PANE_BANDS);
                 }
-                now_playing::draw(f, app, side, pane_spectrum);
+                app.marquee_scrolling = now_playing::draw(f, app, side, pane_spectrum);
             } else {
                 playlist::draw(f, app, panes, true);
             }
@@ -91,6 +97,10 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
         Overlay::Queue { cursor } => queue::draw(f, app, centered(area, 70, 70), cursor),
         Overlay::None => {}
     }
+}
+
+fn side_width(total: u16) -> u16 {
+    (total / 3).clamp(SIDE_WIDTH, SIDE_MAX_WIDTH)
 }
 
 /// Number of bands drawn inside the Now Playing pane (for tests).
@@ -143,6 +153,45 @@ pub fn truncate(s: &str, width: usize, ellipsis: &str) -> String {
     out
 }
 
+/// `s` in `width` columns. Text that does not fit scrolls: `step` columns in, looping with
+/// `gap` between its end and start. At step 0 it is the start, cut off with `ellipsis`.
+pub fn marquee(s: &str, width: usize, step: u64, gap: &str, ellipsis: &str) -> String {
+    if s.width() <= width {
+        return s.to_string();
+    }
+    if step == 0 {
+        return truncate(s, width, ellipsis);
+    }
+    let lap = format!("{s}{gap}");
+    let offset = (step % lap.width() as u64) as usize;
+    let mut out = String::new();
+    let (mut col, mut used) = (0, 0);
+    // Two laps always cover `offset + width` columns, since `width` is less than a lap.
+    for c in lap.chars().chain(lap.chars()) {
+        let w = c.width().unwrap_or(0);
+        let start = col;
+        col += w;
+        if col <= offset {
+            continue;
+        }
+        if start < offset {
+            // The right half of a wide character cut at the left edge.
+            let visible = col - offset;
+            out.extend(std::iter::repeat_n(' ', visible));
+            used += visible;
+            continue;
+        }
+        if used + w > width {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    // A wide character cut at the right edge leaves a column free.
+    out.extend(std::iter::repeat_n(' ', width - used));
+    out
+}
+
 /// `left` and `right` on one line of exactly `width` columns, truncating `left` as needed.
 pub fn justify(left: &str, right: &str, width: usize, ellipsis: &str) -> String {
     let right_w = right.width();
@@ -172,6 +221,28 @@ mod tests {
         // Wide CJK characters take two columns each.
         assert_eq!(truncate("日本語の歌", 5, "…"), "日本…");
         assert_eq!(truncate("abc", 0, "…"), "");
+    }
+
+    #[test]
+    fn marquee_scrolls_only_text_that_does_not_fit() {
+        assert_eq!(marquee("short", 10, 7, " | ", "…"), "short");
+        assert_eq!(marquee("abcdefgh", 5, 0, " | ", "…"), "abcd…");
+        assert_eq!(marquee("abcdefgh", 5, 1, " | ", "…"), "bcdef");
+        assert_eq!(marquee("abcdefgh", 5, 6, " | ", "…"), "gh | ");
+        // It loops: the lap is 11 columns ("abcdefgh | ").
+        assert_eq!(marquee("abcdefgh", 5, 9, " | ", "…"), "| abc");
+        assert_eq!(marquee("abcdefgh", 5, 11, " | ", "…"), "abcde");
+        assert_eq!(marquee("abcdefgh", 5, 12, " | ", "…"), "bcdef");
+    }
+
+    #[test]
+    fn marquee_keeps_wide_characters_aligned() {
+        // Each CJK character takes two columns.
+        for step in 0..30 {
+            let s = marquee("日本語の歌です", 5, step, " · ", "…");
+            assert_eq!(s.width(), 5, "step {step}: {s:?}");
+        }
+        assert_eq!(marquee("日本語の歌です", 5, 1, " · ", "…"), " 本語");
     }
 
     #[test]

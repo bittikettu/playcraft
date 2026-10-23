@@ -442,6 +442,8 @@ pub struct Symbols {
     pub levels: [&'static str; 8],
     pub breadcrumb: &'static str,
     pub ellipsis: &'static str,
+    /// Between the end and the start of scrolling text.
+    pub marquee_gap: &'static str,
 }
 
 impl Symbols {
@@ -456,6 +458,7 @@ impl Symbols {
         levels: ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"],
         breadcrumb: " › ",
         ellipsis: "…",
+        marquee_gap: "   ·   ",
     };
 
     pub const ASCII: Symbols = Symbols {
@@ -478,6 +481,7 @@ impl Symbols {
         levels: [".", ".", ":", ":", "|", "|", "#", "#"],
         breadcrumb: " > ",
         ellipsis: "~",
+        marquee_gap: "   *   ",
     };
 
     pub fn by_name(charset: &str) -> Symbols {

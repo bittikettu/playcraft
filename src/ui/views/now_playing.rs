@@ -3,11 +3,14 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::{spectrum, truncate};
+use unicode_width::UnicodeWidthStr;
+
+use super::{marquee, spectrum};
 use crate::ui::app::App;
 
 /// Draws track info and status; with_spectrum adds small spectrum bars in the free space.
-pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, with_spectrum: bool) {
+/// Values too long for the pane scroll. Returns whether any did.
+pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, with_spectrum: bool) -> bool {
     let theme = &app.theme;
     let block = Block::bordered()
         .border_set(app.symbols.border)
@@ -19,8 +22,12 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, with_spectrum: bool) {
     let width = inner.width as usize;
     let ell = app.symbols.ellipsis;
 
-    let field = |label: &str, value: String| -> Line<'static> {
-        let value = truncate(&value, width.saturating_sub(label.len()), ell);
+    let step = app.marquee_step();
+    let mut scrolling = false;
+    let mut field = |label: &str, value: String| -> Line<'static> {
+        let room = width.saturating_sub(label.len());
+        scrolling |= value.width() > room;
+        let value = marquee(&value, room, step, app.symbols.marquee_gap, ell);
         Line::from(vec![
             Span::styled(label.to_string(), theme.dim),
             Span::styled(value, theme.base),
@@ -132,4 +139,5 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, with_spectrum: bool) {
     lines.extend(std::iter::repeat_n(Line::default(), gap));
     lines.extend(footer.into_iter().take(height.saturating_sub(top)));
     f.render_widget(Paragraph::new(lines), inner);
+    scrolling
 }

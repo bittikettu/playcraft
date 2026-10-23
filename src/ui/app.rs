@@ -25,6 +25,9 @@ use super::prompt::{Prompt, PromptKind, PromptResult};
 use super::theme::{Symbols, Theme};
 
 pub(crate) const VOLUME_STEP: f32 = 0.05;
+/// Scrolling text holds still this long after a track starts, then moves a column a step.
+const MARQUEE_PAUSE: Duration = Duration::from_secs(2);
+const MARQUEE_STEP: Duration = Duration::from_millis(200);
 pub(crate) const SEEK_STEP_SECS: i64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,6 +187,11 @@ pub struct App {
     /// move it, so the play order continues from here once the queue is empty.
     pub(crate) order_pos: Option<u64>,
     pub now: Option<NowPlaying>,
+    /// Scrolling text in Now Playing starts from here (reset when a track starts).
+    pub(crate) marquee_since: Instant,
+    /// Whether text was scrolling in the last drawn frame, and at which step.
+    pub(crate) marquee_scrolling: bool,
+    marquee_drawn: u64,
     pub banner: Option<Banner>,
     pub play_mode: PlayMode,
     pub repeat: RepeatMode,
@@ -239,6 +247,9 @@ impl App {
             queue: Vec::new(),
             order_pos: None,
             now: None,
+            marquee_since: Instant::now(),
+            marquee_scrolling: false,
+            marquee_drawn: 0,
             banner: None,
             play_mode: PlayMode::default(),
             repeat: RepeatMode::default(),
@@ -390,7 +401,39 @@ impl App {
             self.banner = None;
             return true;
         }
+        // Scrolling text moves on its own (while playing, frames are drawn anyway).
+        if self.marquee_scrolling && !self.is_animating() {
+            let step = self.marquee_step();
+            if step != self.marquee_drawn {
+                self.marquee_drawn = step;
+                return true;
+            }
+        }
         false
+    }
+
+    /// How many columns scrolling text has moved (0 = not yet).
+    pub fn marquee_step(&self) -> u64 {
+        let elapsed = self.marquee_since.elapsed();
+        match elapsed.checked_sub(MARQUEE_PAUSE) {
+            Some(moving) => 1 + (moving.as_millis() / MARQUEE_STEP.as_millis()) as u64,
+            None => 0,
+        }
+    }
+
+    /// Time until scrolling text moves again, if any is scrolling.
+    pub fn marquee_wait(&self) -> Option<Duration> {
+        if !self.marquee_scrolling {
+            return None;
+        }
+        let elapsed = self.marquee_since.elapsed();
+        Some(match elapsed.checked_sub(MARQUEE_PAUSE) {
+            Some(moving) => {
+                let step = MARQUEE_STEP.as_nanos();
+                Duration::from_nanos((step - moving.as_nanos() % step) as u64)
+            }
+            None => MARQUEE_PAUSE - elapsed,
+        })
     }
 
     /// Feeds the spectrum analyser from the audio tap. Call once per loop iteration.
