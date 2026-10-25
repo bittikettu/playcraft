@@ -401,6 +401,8 @@ impl App {
         self.fm.show_hidden = config.ui.show_hidden;
         self.outputs.http_port = config.outputs.http_port;
         self.outputs.sonos_hosts = config.outputs.sonos_hosts.clone();
+        self.outputs.cover_art = super::cast::CoverArt::from_name(&config.outputs.cover_art)
+            .unwrap_or(super::cast::CoverArt::Themed);
         self.fm.go_to(
             crate::library::fs_browser::Location::Dir(config.music_dir()),
             None,

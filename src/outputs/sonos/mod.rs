@@ -227,6 +227,7 @@ mod tests {
             title: "Rock & Roll".into(),
             artist: Some("Led Zeppelin".into()),
             album: None,
+            year: None,
             duration: Some(Duration::from_secs(220)),
             art: Some("http://10.0.0.2:5000/s/2.jpg".into()),
         };

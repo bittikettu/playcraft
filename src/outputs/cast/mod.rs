@@ -305,6 +305,9 @@ impl Session {
         if let Some(album) = &song.album {
             metadata.insert("albumName".into(), album.clone().into());
         }
+        if let Some(year) = song.year {
+            metadata.insert("releaseDate".into(), year.to_string().into());
+        }
         if let Some(art) = &song.art {
             metadata.insert("images".into(), json!([{ "url": art }]));
         }
@@ -545,6 +548,7 @@ mod tests {
                 title: "So What".into(),
                 artist: Some("Miles Davis".into()),
                 album: Some("Kind of Blue".into()),
+                year: Some(1959),
                 duration: Some(Duration::from_secs(562)),
                 art: Some("http://x/art.jpg".into()),
             },
@@ -582,6 +586,7 @@ mod tests {
             assert_eq!(st.metadata["title"], "So What");
             assert_eq!(st.metadata["artist"], "Miles Davis");
             assert_eq!(st.metadata["albumName"], "Kind of Blue");
+            assert_eq!(st.metadata["releaseDate"], "1959");
             assert_eq!(st.metadata["images"][0]["url"], "http://x/art.jpg");
             assert_eq!(st.count("receiver LAUNCH"), 1);
             assert_eq!(

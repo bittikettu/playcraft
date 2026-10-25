@@ -104,7 +104,7 @@ impl Default for Mcp {
 }
 
 /// `[outputs]`: playing on Sonos speakers and Google Cast devices (`o` picks the output).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Outputs {
     /// Port devices fetch songs from; 0 picks a free one.
@@ -112,6 +112,18 @@ pub struct Outputs {
     /// Sonos speaker addresses to ask besides those found on the network, for when the
     /// search cannot reach them (another subnet, multicast blocked).
     pub sonos_hosts: Vec<String>,
+    /// The cover art devices show: `themed` (a card in the player's theme) or `album`.
+    pub cover_art: String,
+}
+
+impl Default for Outputs {
+    fn default() -> Self {
+        Outputs {
+            http_port: 0,
+            sonos_hosts: Vec::new(),
+            cover_art: "themed".into(),
+        }
+    }
 }
 
 /// A key list in `[keybindings]`: `play_pause = ["Space", "c"]` or `stop = "s"`.
@@ -252,6 +264,13 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ui.charset
         ));
         ui.charset = Ui::default().charset;
+    }
+    if !["themed", "album"].contains(&config.outputs.cover_art.as_str()) {
+        warnings.push(format!(
+            "config: cover_art must be \"themed\" or \"album\", not \"{}\"",
+            config.outputs.cover_art
+        ));
+        config.outputs.cover_art = Outputs::default().cover_art;
     }
     let general = &mut config.general;
     if !(50..=2000).contains(&general.audio_buffer_ms) {
@@ -450,6 +469,9 @@ pub fn default_file_text() -> String {
          http_port = 0\n\
          # Sonos speakers the network search cannot find (another subnet), e.g. [\"192.168.1.20\"]\n\
          sonos_hosts = []\n\
+         # Cover art on TVs and in the Sonos app: themed (a card drawn in the player's colour\n\
+         # theme) or album (the album's own art when there is some)\n\
+         cover_art = \"themed\"\n\
          \n\
          [keybindings]\n\
          # Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,\n\

@@ -214,7 +214,9 @@ Pick one with Enter and the music moves there, from the same spot. Pick **This c
 - **Visualizers stay in time.** The computer keeps playing the song silently, which drives the visualizers and the progress bar, and it is kept within a fraction of a second of the device.
 - **The device's own controls still work.** Pausing, playing, stopping or changing the volume in the Sonos app, on the speaker or with the TV's remote is followed by the player.
   - If the device switches to something else (Spotify on the Sonos, Netflix on the TV), the player stops following it and pauses.
-- **The TV shows the song:** title, artist, album and cover art. The art comes from the file's tags, or from a `cover.jpg` or `folder.jpg` next to it. The Sonos app shows the same.
+- **The TV shows the song:** title, artist, album and a cover drawn in the player's colour theme. It looks like the player: a Now Playing frame, the song in a retro pixel font, and spectrum bars in the theme's gradient, shaped differently for every song. The Sonos app shows the same cover.
+  - With `cover_art = "album"`, the album's own art is shown instead, when there is some: a picture in the file's tags, or a `cover.jpg` or `folder.jpg` next to it.
+  - A new theme shows from the next song on.
 - **Any file plays.** If a device cannot play a file, the player sends it as WAV instead, converted on the fly. Examples are hi-res FLAC above 48 kHz, which no Sonos speaker plays, and formats an older model lacks.
 - **Between songs there is a short pause**, because the device loads each song separately. Gapless albums are therefore not gapless there.
 - **Now Playing** shows the device, and the message log (`L`) records what it is sent.
@@ -232,6 +234,7 @@ Pick one with Enter and the music moves there, from the same spot. Pick **This c
 [outputs]
 http_port = 0                    # port devices fetch songs from; 0 = any free port (set one for a firewall rule)
 sonos_hosts = ["192.168.1.20"]   # Sonos speakers the network search cannot find, e.g. on another subnet
+cover_art = "themed"             # or "album": the album's own art when there is some
 ```
 
 **If a device is not found:**
@@ -241,7 +244,7 @@ sonos_hosts = ["192.168.1.20"]   # Sonos speakers the network search cannot find
 - A TV in standby may not answer. Turn it on, or look in its settings for an option that keeps casting available in standby (often called network standby or remote start).
 
 **Security:**
-- **The web server** serves only the songs being played (and their cover art), at addresses that contain a random 128-bit key. It does not list folders or serve anything else.
+- **The web server** serves only the songs being played (and their covers), at addresses that contain a random 128-bit key. It does not list folders or serve anything else.
 - **Connections to Cast devices** are encrypted. The device's self-signed certificate is accepted without checking, as is usual for Cast software outside Google's own apps.
 
 ## AI control (MCP)

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::card::Card;
 use super::http::{self, header};
 use super::wav::WavSong;
 
@@ -110,12 +111,16 @@ enum Kind {
     Wav,
     /// The picture in its tags.
     Art,
+    /// A cover card drawn for it (by the hash of what the card shows).
+    Card(u64),
 }
 
 #[derive(Default)]
 struct Published {
     files: Vec<(PathBuf, Kind)>,
     ids: HashMap<(PathBuf, Kind), usize>,
+    /// What the cover cards show, by file id; they are drawn when fetched.
+    cards: HashMap<usize, Arc<Card>>,
     /// Requests per file, to tell whether a speaker could reach us at all.
     fetches: Vec<u32>,
 }
@@ -228,6 +233,24 @@ impl MediaServer {
         self.url(&path, device).ok()
     }
 
+    /// The URL path of a cover card for `song`.
+    pub fn publish_card(&self, song: &Path, card: Card) -> String {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&card, &mut hasher);
+        let hash = std::hash::Hasher::finish(&hasher);
+        let path = self.publish_as(song, Kind::Card(hash), "png");
+        if let Some(id) = file_id(&path, &self.secret) {
+            let mut p = self.published.lock().unwrap_or_else(|e| e.into_inner());
+            p.cards.entry(id).or_insert_with(|| Arc::new(card));
+        }
+        path
+    }
+
+    /// The full URL of a cover card for `song`, for a device at `device`.
+    pub fn card_url_for(&self, song: &Path, card: Card, device: SocketAddr) -> Option<String> {
+        self.url(&self.publish_card(song, card), device).ok()
+    }
+
     /// How many requests the file behind `url` (from `url_for`/`publish`) has had.
     pub fn fetches(&self, url: &str) -> u32 {
         let p = self.published.lock().unwrap_or_else(|e| e.into_inner());
@@ -301,11 +324,13 @@ fn serve(mut stream: TcpStream, secret: &str, published: &Mutex<Published>) -> i
     let file = file_id(target, secret).and_then(|id| {
         let mut p = published.lock().unwrap_or_else(|e| e.into_inner());
         let (path, kind) = p.files.get(id).cloned()?;
+        let card = p.cards.get(&id).cloned();
         if p.fetches[id] == 0 {
             let how = match kind {
                 Kind::File => "",
                 Kind::Wav => " as WAV",
                 Kind::Art => "'s cover",
+                Kind::Card(_) => "'s cover card",
             };
             log::info!(
                 "{} is fetching {}{how}",
@@ -316,9 +341,9 @@ fn serve(mut stream: TcpStream, secret: &str, published: &Mutex<Published>) -> i
             );
         }
         p.fetches[id] += 1;
-        Some((path, kind))
+        Some((path, kind, card))
     });
-    let Some((path, kind)) = file else {
+    let Some((path, kind, card)) = file else {
         return reply(&mut stream, "404 Not Found", "");
     };
     match kind {
@@ -329,6 +354,21 @@ fn serve(mut stream: TcpStream, secret: &str, published: &Mutex<Published>) -> i
                 return reply(&mut stream, "404 Not Found", "");
             };
             let Some((start, count)) = respond(&mut stream, mime, data.len() as u64, &headers)?
+            else {
+                return Ok(());
+            };
+            if method == "GET" {
+                stream.write_all(&data[start as usize..(start + count) as usize])?;
+            }
+            return stream.flush();
+        }
+        Kind::Card(_) => {
+            let Some(card) = card else {
+                return reply(&mut stream, "404 Not Found", "");
+            };
+            let data = card.png();
+            let Some((start, count)) =
+                respond(&mut stream, "image/png", data.len() as u64, &headers)?
             else {
                 return Ok(());
             };

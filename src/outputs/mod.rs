@@ -4,6 +4,7 @@
 //! driven through a background `link`. The local playback goes on muted, driving the
 //! visualizers and the play order, and is kept in step with the device (`sync`).
 
+pub mod card;
 pub mod cast;
 pub mod http;
 pub mod link;

@@ -58,6 +58,7 @@ pub struct SongInfo {
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub year: Option<u32>,
     pub duration: Option<Duration>,
     /// URL of the cover art.
     pub art: Option<String>,

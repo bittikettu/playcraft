@@ -12,6 +12,7 @@ use crossbeam_channel::{Receiver, TryRecvError, bounded};
 
 use crate::audio::AudioCommand;
 use crate::model::PlaybackStatus;
+use crate::outputs::card::Card;
 use crate::outputs::link::{self, Command, Event, Status, TransportState};
 use crate::outputs::media::{self, MediaServer};
 use crate::outputs::sync::Offset;
@@ -53,11 +54,31 @@ impl Default for CastTiming {
     }
 }
 
+/// What devices show as a song's cover art.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoverArt {
+    /// A card drawn in the player's theme (`outputs::card`).
+    Themed,
+    /// The album's own art (from the tags or the folder), else a themed card.
+    Album,
+}
+
+impl CoverArt {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "themed" => Some(CoverArt::Themed),
+            "album" => Some(CoverArt::Album),
+            _ => None,
+        }
+    }
+}
+
 /// Settings for network outputs, from `[outputs]`.
 #[derive(Debug, Clone)]
 pub struct OutputSettings {
     pub http_port: u16,
     pub sonos_hosts: Vec<String>,
+    pub cover_art: CoverArt,
     /// Search the network (SSDP and mDNS) besides asking `sonos_hosts`; tests do not.
     pub search_network: bool,
     /// Where devices fetch songs: every adapter (tests use localhost).
@@ -70,6 +91,7 @@ impl Default for OutputSettings {
         OutputSettings {
             http_port: 0,
             sonos_hosts: Vec::new(),
+            cover_art: CoverArt::Themed,
             search_network: true,
             bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             timing: CastTiming::default(),
@@ -608,8 +630,28 @@ impl App {
             title,
             artist: meta.and_then(|m| m.artist.clone()),
             album: meta.and_then(|m| m.album.clone()),
+            year: meta.and_then(|m| m.year),
             duration,
             art: None,
+        }
+    }
+
+    /// A cover card for `song` in the current theme.
+    fn cover_card(&self, path: &std::path::Path, song: &SongInfo) -> Card {
+        let album = match (&song.album, song.year) {
+            (Some(album), Some(year)) => Some(format!("{album} ({year})")),
+            (Some(album), None) => Some(album.clone()),
+            (None, Some(year)) => Some(year.to_string()),
+            (None, None) => None,
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(path, &mut hasher);
+        Card {
+            title: song.title.clone(),
+            artist: song.artist.clone(),
+            album,
+            colors: self.theme.card_colors(),
+            seed: std::hash::Hasher::finish(&hasher),
         }
     }
 
@@ -679,6 +721,8 @@ impl App {
     ) {
         let settle = self.outputs.timing.settle;
         let song = self.song_info(path, duration);
+        let card = self.cover_card(path, &song);
+        let cover_art = self.outputs.cover_art;
         let (Some(cast), Some(media)) = (self.cast.as_mut(), self.media.as_ref()) else {
             return;
         };
@@ -712,7 +756,12 @@ impl App {
             media::mime_type(path)
         };
         let mut song = song;
-        song.art = media.art_url_for(path, addr);
+        song.art = match cover_art {
+            CoverArt::Album => media
+                .art_url_for(path, addr)
+                .or_else(|| media.card_url_for(path, card, addr)),
+            CoverArt::Themed => media.card_url_for(path, card, addr),
+        };
         cast.send(Command::Load {
             url,
             mime: mime.into(),
@@ -1153,6 +1202,25 @@ mod tests {
             assert_eq!(s.content_type, "audio/mpeg");
             assert_eq!(s.metadata["title"], "sine_44k_cbr");
         }
+        // Its cover art is a card drawn in the player's theme.
+        let art = tv.state().metadata["images"][0]["url"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(art.ends_with(".png"), "{art}");
+        let card = crate::outputs::sonos::fake::fetch(&art).unwrap();
+        assert_eq!(&card[1..4], b"PNG", "a PNG file");
+        // Another theme makes another card (with an address of its own).
+        let dracula = app.media.as_ref().unwrap().publish_card(
+            &fixture(SONGS[0]),
+            app.cover_card(&fixture(SONGS[0]), &app.song_info(&fixture(SONGS[0]), None)),
+        );
+        app.theme = crate::ui::theme::Theme::nord();
+        let nord = app.media.as_ref().unwrap().publish_card(
+            &fixture(SONGS[0]),
+            app.cover_card(&fixture(SONGS[0]), &app.song_info(&fixture(SONGS[0]), None)),
+        );
+        assert_ne!(dracula, nord);
         // The TV's volume is shown and set.
         wait_app(&mut app, "TV volume", |a| {
             (a.audio.shared().volume() - 0.3).abs() < 0.001

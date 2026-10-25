@@ -6,6 +6,8 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 
+use crate::outputs::card::CardColors;
+
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub name: &'static str,
@@ -161,7 +163,103 @@ impl Palette {
     }
 }
 
+/// Windows Terminal's default ("Campbell") colours, for the terminal's named colours.
+fn named_rgb(color: Color) -> Option<[u8; 3]> {
+    let hex: u32 = match color {
+        Color::Black => 0x0c0c0c,
+        Color::Red => 0xc50f1f,
+        Color::Green => 0x13a10e,
+        Color::Yellow => 0xc19c00,
+        Color::Blue => 0x0037da,
+        Color::Magenta => 0x881798,
+        Color::Cyan => 0x3a96dd,
+        Color::Gray => 0xcccccc,
+        Color::DarkGray => 0x767676,
+        Color::LightRed => 0xe74856,
+        Color::LightGreen => 0x16c60c,
+        Color::LightYellow => 0xf9f1a5,
+        Color::LightBlue => 0x3b78ff,
+        Color::LightMagenta => 0xb4009e,
+        Color::LightCyan => 0x61d6d6,
+        Color::White => 0xf2f2f2,
+        _ => return None,
+    };
+    Some([(hex >> 16) as u8, (hex >> 8) as u8, hex as u8])
+}
+
+/// The RGB value of a terminal colour; `None` for the terminal's default colour.
+fn color_rgb(color: Color) -> Option<[u8; 3]> {
+    const BASIC: [Color; 16] = [
+        Color::Black,
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::Gray,
+        Color::DarkGray,
+        Color::LightRed,
+        Color::LightGreen,
+        Color::LightYellow,
+        Color::LightBlue,
+        Color::LightMagenta,
+        Color::LightCyan,
+        Color::White,
+    ];
+    match color {
+        Color::Rgb(r, g, b) => Some([r, g, b]),
+        Color::Indexed(n @ 0..16) => named_rgb(BASIC[n as usize]),
+        Color::Indexed(n @ 16..232) => {
+            let level = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
+            let n = n - 16;
+            Some([level(n / 36), level(n / 6 % 6), level(n % 6)])
+        }
+        Color::Indexed(n) => {
+            let grey = 8 + (n - 232) * 10;
+            Some([grey, grey, grey])
+        }
+        Color::Reset => None,
+        named => named_rgb(named),
+    }
+}
+
+/// The foreground colour of `style` as RGB. The terminal's default colour becomes
+/// `default`, brighter for bold text and darker for dim text (the monochrome theme).
+fn style_rgb(style: Style, default: [u8; 3]) -> [u8; 3] {
+    if let Some(rgb) = style.fg.and_then(color_rgb) {
+        return rgb;
+    }
+    if style.add_modifier.contains(Modifier::BOLD) {
+        [0xf2, 0xf2, 0xf2]
+    } else if style.add_modifier.contains(Modifier::DIM) {
+        [0x76, 0x76, 0x76]
+    } else {
+        default
+    }
+}
+
 impl Theme {
+    /// The theme's colours for a cover card (see `outputs::card`).
+    pub fn card_colors(&self) -> CardColors {
+        let background = self
+            .base
+            .bg
+            .and_then(color_rgb)
+            .unwrap_or([0x0c, 0x0c, 0x0c]);
+        let text = style_rgb(self.base, [0xcc, 0xcc, 0xcc]);
+        CardColors {
+            background,
+            frame: style_rgb(self.border, text),
+            title: style_rgb(self.title, text),
+            text,
+            dim: style_rgb(self.dim, text),
+            low: style_rgb(self.spectrum, text),
+            mid: style_rgb(self.spectrum_mid, text),
+            hot: style_rgb(self.spectrum_hot, text),
+        }
+    }
+
     /// Looks up a theme by its config name. RGB themes fall back to `classic_blue` when
     /// truecolor is unavailable; the second value explains why.
     pub fn by_name(name: &str, truecolor: bool) -> (Theme, Option<String>) {
@@ -528,6 +626,28 @@ mod tests {
                 assert_eq!(theme.name, info.name);
             }
         }
+    }
+
+    #[test]
+    fn card_colours_come_from_every_kind_of_theme() {
+        let dracula = Theme::dracula().card_colors();
+        assert_eq!(dracula.background, [0x28, 0x2a, 0x36]);
+        assert_eq!(dracula.title, [0xbd, 0x93, 0xf9]);
+        assert_eq!(dracula.hot, [0xff, 0x55, 0x55]);
+        // Named terminal colours.
+        let blue = Theme::classic_blue().card_colors();
+        assert_eq!(blue.background, [0x00, 0x37, 0xda]);
+        assert_eq!(blue.mid, [0xc1, 0x9c, 0x00]);
+        // The terminal's own colours, told apart by bold and dim.
+        let mono = Theme::monochrome().card_colors();
+        assert_eq!(mono.background, [0x0c, 0x0c, 0x0c]);
+        assert_eq!(mono.text, [0xcc, 0xcc, 0xcc]);
+        assert_eq!(mono.title, [0xf2, 0xf2, 0xf2]);
+        assert_eq!(mono.dim, [0x76, 0x76, 0x76]);
+        // The 256-colour palette.
+        assert_eq!(color_rgb(Color::Indexed(196)), Some([255, 0, 0]));
+        assert_eq!(color_rgb(Color::Indexed(232)), Some([8, 8, 8]));
+        assert_eq!(color_rgb(Color::Indexed(4)), Some([0x00, 0x37, 0xda]));
     }
 
     #[test]
