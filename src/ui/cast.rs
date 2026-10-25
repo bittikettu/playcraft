@@ -1039,6 +1039,7 @@ impl App {
                 mime: "application/x-mpegURL".into(),
                 song: SongInfo {
                     title: "mp3blaster-rs".into(),
+                    artist: Some("Live from the player".into()),
                     ..SongInfo::default()
                 },
                 start: Duration::ZERO,

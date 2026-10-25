@@ -92,6 +92,8 @@ struct Session {
     volume: Option<u8>,
     /// The device could not play what it was given (reported once).
     playback_failed: bool,
+    /// The device's first report on what it loaded has been logged.
+    load_logged: bool,
 }
 
 fn seconds(d: Duration) -> f64 {
@@ -112,6 +114,7 @@ impl Session {
             media: Media::default(),
             volume: None,
             playback_failed: false,
+            load_logged: true,
         };
         session.send(NS_CONNECTION, PLATFORM, &json!({ "type": "CONNECT" }))?;
         session.receiver_status()?;
@@ -231,6 +234,16 @@ impl Session {
     }
 
     fn media_update(&mut self, status: &Value) {
+        if !self.load_logged
+            && let Some(item) = status.as_array().and_then(|s| s.first())
+            && item.get("media").is_some()
+        {
+            // What the device made of it, e.g. whether it found a video track.
+            self.load_logged = true;
+            let mut text = item.to_string();
+            text.truncate(1500);
+            log::info!("Cast device loaded: {text}");
+        }
         let Some(item) = status.as_array().and_then(|s| s.first()) else {
             // No media session: what played has ended.
             self.media.session = None;
@@ -297,11 +310,13 @@ impl Session {
         let transport = self.ensure_app()?;
         let session = self.app.as_ref().map(|a| a.session.clone());
         let mut metadata = Map::new();
-        // MusicTrackMediaMetadata
-        metadata.insert("metadataType".into(), 3.into());
+        // A song is a MusicTrackMediaMetadata; the TV stream is video, GenericMediaMetadata
+        // (with music metadata the player shows its music screen, not the picture).
+        metadata.insert("metadataType".into(), if live { 0 } else { 3 }.into());
         metadata.insert("title".into(), song.title.clone().into());
         if let Some(artist) = &song.artist {
-            metadata.insert("artist".into(), artist.clone().into());
+            let field = if live { "subtitle" } else { "artist" };
+            metadata.insert(field.into(), artist.clone().into());
         }
         if let Some(album) = &song.album {
             metadata.insert("albumName".into(), album.clone().into());
@@ -324,8 +339,7 @@ impl Session {
             "autoplay": play,
         });
         if live {
-            // HLS of MPEG-TS segments (the TV stream), played from its live edge.
-            media["hlsSegmentFormat"] = "ts".into();
+            // HLS of MPEG-TS segments with video (the TV stream), played from its live edge.
             media["hlsVideoSegmentFormat"] = "mpeg2_ts".into();
         } else {
             if let Some(d) = song.duration {
@@ -335,6 +349,7 @@ impl Session {
         }
         load["media"] = media;
         self.playback_failed = false;
+        self.load_logged = false;
         self.media = Media::default();
         let reply = self.request(NS_MEDIA, &transport, load, "LOAD", LOAD_TIMEOUT)?;
         match reply["type"].as_str() {
@@ -641,6 +656,10 @@ mod tests {
         let st = fake.state();
         assert_eq!(st.stream_type, "LIVE");
         assert_eq!(st.content_type, "application/x-mpegURL");
+        // Video, not a music track (which would show the music screen instead).
+        assert_eq!(st.metadata["metadataType"], 0);
+        assert_eq!(st.media["hlsVideoSegmentFormat"], "mpeg2_ts");
+        assert!(st.media.get("hlsSegmentFormat").is_none());
     }
 
     #[test]

@@ -29,6 +29,8 @@ pub struct FakeCastState {
     pub content_type: String,
     /// BUFFERED or LIVE.
     pub stream_type: String,
+    /// The `media` of the last LOAD.
+    pub media: Value,
     pub metadata: Value,
     /// IDLE, BUFFERING, PLAYING or PAUSED.
     pub player_state: String,
@@ -75,6 +77,7 @@ impl FakeCast {
             content_id: String::new(),
             content_type: String::new(),
             stream_type: String::new(),
+            media: Value::Null,
             metadata: Value::Null,
             player_state: "IDLE".into(),
             idle_reason: None,
@@ -217,6 +220,7 @@ fn answer(message: &Message, state: &Arc<Mutex<FakeCastState>>) -> Vec<Value> {
             s.content_id = media["contentId"].as_str().unwrap_or("").to_string();
             s.content_type = content_type;
             s.stream_type = media["streamType"].as_str().unwrap_or("").to_string();
+            s.media = media.clone();
             s.metadata = media["metadata"].clone();
             s.position = request["currentTime"].as_f64().unwrap_or(0.0);
             s.idle_reason = None;
