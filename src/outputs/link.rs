@@ -134,7 +134,16 @@ impl Link {
         let (events_tx, events) = unbounded();
         let thread = std::thread::Builder::new()
             .name(name.into())
-            .spawn(move || worker(received, events_tx))
+            .spawn(move || {
+                // A bug in a worker ends the cast with a message instead of a dead link.
+                let report = events_tx.clone();
+                let work = std::panic::AssertUnwindSafe(move || worker(received, events_tx));
+                if std::panic::catch_unwind(work).is_err() {
+                    let _ = report.send(Event::Unreachable(
+                        "the connection failed (see the message log)".into(),
+                    ));
+                }
+            })
             .ok();
         Link {
             commands: Some(commands),
@@ -237,6 +246,15 @@ pub(crate) mod tests {
                 Event::Status(_) => {}
                 other => panic!("{other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn a_worker_that_panics_reports_the_device_unreachable() {
+        let link = Link::spawn("test-link", |_, _| panic!("a bug"));
+        match link.events().recv_timeout(Duration::from_secs(5)).unwrap() {
+            Event::Unreachable(msg) => assert!(msg.contains("failed"), "{msg}"),
+            other => panic!("{other:?}"),
         }
     }
 

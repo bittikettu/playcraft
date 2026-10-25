@@ -83,8 +83,14 @@ type Tui = Terminal<backend::FastBackend<FrameWriter>>;
 fn init_terminal() -> std::io::Result<Tui> {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        ratatui::restore();
-        previous(info);
+        if std::thread::current().name() == Some("main") {
+            ratatui::restore();
+            previous(info);
+        } else {
+            // A background thread: printing would land in the middle of the screen, and its
+            // owner deals with it (a lost device, a crashed audio engine).
+            log::error!("{info}");
+        }
     }));
     enable_raw_mode()?;
     execute!(std::io::stdout(), EnterAlternateScreen)?;

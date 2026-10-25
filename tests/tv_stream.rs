@@ -109,3 +109,49 @@ fn a_tone_becomes_a_live_hls_stream() {
     done.store(true, Ordering::Relaxed);
     card.join().unwrap();
 }
+
+/// Streams for `TV_STREAM_SECS` seconds (to watch CPU use from outside):
+/// `TV_STREAM_SECS=20 cargo test --release --test tv_stream long_stream -- --ignored`
+#[test]
+#[ignore]
+fn long_stream() {
+    let Ok(secs) = std::env::var("TV_STREAM_SECS") else {
+        return;
+    };
+    let secs: u64 = secs.parse().unwrap();
+    let shared = Arc::new(Shared::default());
+    let (mut prod, cons) = HeapRb::<f32>::new(48_000 * 2).split();
+    let slot = Arc::new(std::sync::Mutex::new(Some(Capture {
+        samples: cons,
+        rate: 48_000,
+        channels: 2,
+    })));
+    let feeder = {
+        let shared = shared.clone();
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            let mut n = 0u64;
+            while started.elapsed() < Duration::from_secs(secs + 5) {
+                if shared.capturing() {
+                    let chunk: Vec<f32> = (0..480)
+                        .flat_map(|i| {
+                            let t = (n + i) as f32 / 48_000.0;
+                            let kick = (-(t % 0.5) * 10.0).exp();
+                            let s = (t * 60.0 * std::f32::consts::TAU).sin() * (0.2 + 0.6 * kick)
+                                + (t * 880.0 * std::f32::consts::TAU).sin() * 0.1;
+                            [s, s]
+                        })
+                        .collect();
+                    prod.push_slice(&chunk);
+                    n += 480;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        })
+    };
+    let stream = VideoStream::start("ffmpeg", "auto", slot, shared, TvInfo::default());
+    std::thread::sleep(Duration::from_secs(secs));
+    assert!(stream.failure().is_none(), "{:?}", stream.failure());
+    stream.stop(Duration::from_secs(5));
+    feeder.join().unwrap();
+}

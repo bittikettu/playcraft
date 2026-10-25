@@ -1074,6 +1074,11 @@ impl Hyperspace {
     pub fn pixel(&self, x: usize, y: usize) -> [u8; 3] {
         self.pixels.get(y * self.w + x).copied().unwrap_or([0; 3])
     }
+
+    /// Row `y` of the rendered picture (empty outside it).
+    pub fn row(&self, y: usize) -> &[[u8; 3]] {
+        self.pixels.get(y * self.w..(y + 1) * self.w).unwrap_or(&[])
+    }
 }
 
 /// Horizontal (or vertical) box blur of `src` into `dst`.

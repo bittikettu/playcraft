@@ -260,14 +260,15 @@ impl Session {
         if item["playerState"] == "IDLE" && item["idleReason"] == "ERROR" {
             self.playback_failed = true;
         }
-        if let Some(t) = item["currentTime"].as_f64() {
+        if let Some(t) = item["currentTime"].as_f64().filter(|t| t.is_finite()) {
             self.media.position = Some(t.max(0.0));
         }
         if let Some(id) = item["media"]["contentId"].as_str() {
             self.media.content_id = id.to_string();
         }
+        // A live stream's duration is -1.
         if let Some(d) = item["media"]["duration"].as_f64() {
-            self.media.duration = Some(d);
+            self.media.duration = (d.is_finite() && d > 0.0).then_some(d);
         }
     }
 
@@ -650,9 +651,10 @@ mod tests {
             play: true,
             live: true,
         });
-        next_status(&link, |s| {
+        let s = next_status(&link, |s| {
             s.done == sent && s.track_uri == "x-test:live.m3u8"
         });
+        assert_eq!(s.duration, None, "a live stream has no length");
         let st = fake.state();
         assert_eq!(st.stream_type, "LIVE");
         assert_eq!(st.content_type, "application/x-mpegURL");

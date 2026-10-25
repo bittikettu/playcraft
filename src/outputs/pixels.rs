@@ -71,14 +71,17 @@ impl Canvas {
         color: [u8; 3],
         alpha: f32,
     ) {
-        let a = alpha.clamp(0.0, 1.0);
+        // In 1/256ths, with the colour's share worked out once.
+        let a = (alpha.clamp(0.0, 1.0) * 256.0).round() as u32;
+        let add = color.map(|c| u32::from(c) * a + 128);
+        let keep = 256 - a;
         let (x1, y1) = ((x + w).min(self.width), (y + h).min(self.height));
-        for row in y.min(self.height)..y1 {
-            for col in x.min(self.width)..x1 {
-                let i = (row * self.width + col) * 3;
-                for (old, new) in self.pixels[i..i + 3].iter_mut().zip(color) {
-                    let o = f32::from(*old);
-                    *old = (o + (f32::from(new) - o) * a).round() as u8;
+        let (x0, y0) = (x.min(x1), y.min(y1));
+        for row in y0..y1 {
+            let line = &mut self.pixels[(row * self.width + x0) * 3..(row * self.width + x1) * 3];
+            for p in line.as_chunks_mut::<3>().0 {
+                for k in 0..3 {
+                    p[k] = ((u32::from(p[k]) * keep + add[k]) >> 8) as u8;
                 }
             }
         }

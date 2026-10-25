@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use crate::hyperspace::{Hyperspace, Palette};
+use crate::hyperspace::{Hyperspace, Palette, Tuning};
 use crate::outputs::card::CardColors;
 use crate::outputs::pixels::{Canvas, fit};
 use crate::spectrum::SpectrumAnalyzer;
@@ -96,6 +96,15 @@ impl Default for Scene {
 impl Scene {
     pub fn new() -> Self {
         let mut hyperspace = Hyperspace::new(0x7e1e);
+        // Full colour detail: the terminal presets round colours and skip small changes to
+        // spare the terminal, which only costs a video picture.
+        if let Some(balanced) = Tuning::preset("balanced") {
+            hyperspace.tuning = Tuning {
+                quant_shift: 0,
+                hysteresis: 0,
+                ..balanced
+            };
+        }
         hyperspace.resize(WIDTH / HYPERSPACE_SCALE, HEIGHT / HYPERSPACE_SCALE);
         Scene {
             canvas: Canvas::new(WIDTH, HEIGHT, [0; 3]),
@@ -144,11 +153,10 @@ impl Scene {
         let row_bytes = WIDTH * 3;
         for y in 0..HEIGHT / s {
             let top = y * s * row_bytes;
-            for x in 0..WIDTH / s {
-                let p = hs.pixel(x, y);
-                for dx in 0..s {
-                    let i = top + (x * s + dx) * 3;
-                    self.canvas.pixels[i..i + 3].copy_from_slice(&p);
+            let line = &mut self.canvas.pixels[top..top + row_bytes];
+            for (block, p) in line.chunks_exact_mut(3 * s).zip(hs.row(y)) {
+                for px in block.as_chunks_mut::<3>().0 {
+                    *px = *p;
                 }
             }
             let (done, rest) = self.canvas.pixels.split_at_mut(top + row_bytes);

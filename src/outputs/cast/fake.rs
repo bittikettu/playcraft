@@ -173,7 +173,12 @@ fn media_status(s: &FakeCastState, id: &Value) -> Value {
             "mediaSessionId": 1,
             "playerState": s.player_state,
             "currentTime": s.position,
-            "media": { "contentId": s.content_id, "contentType": s.content_type, "duration": 10.0 },
+            "media": {
+                "contentId": s.content_id,
+                "contentType": s.content_type,
+                // As real devices do: a live stream has no end.
+                "duration": if s.stream_type == "LIVE" { -1.0 } else { 10.0 },
+            },
         });
         if let Some(reason) = &s.idle_reason {
             item["idleReason"] = reason.as_str().into();
