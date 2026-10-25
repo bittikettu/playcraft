@@ -88,6 +88,9 @@ docker run -it --rm -v "D:\Music:/music:ro" mp3blaster      # play your own musi
   - the music folder is `/music`, which holds the test tones unless you mount your own;
   - the config is `~/.config/mp3blaster-rs/config.toml`;
   - nothing is kept after the container exits.
+- **Sonos speakers:** the container's own network cannot see your speakers.
+  - On a Linux host, add `--network host`, so the speaker search and the speakers' song requests reach the player.
+  - Docker Desktop (Windows and macOS) runs containers in a virtual machine, so the speaker search usually finds nothing there. Play on Sonos from the Windows build instead.
 - **AI control (MCP):** give the container a name with `--name mp3blaster`. Then use `docker exec -i mp3blaster mp3blaster-rs --mcp` as the MCP server command. For Claude Desktop, that is `"command": "docker", "args": ["exec", "-i", "mp3blaster", "mp3blaster-rs", "--mcp"]`.
 
 ## Usage
@@ -168,6 +171,7 @@ Run `mp3blaster-rs --write-default-config` to get a commented file, or see [`con
 - Every setting is optional, and an invalid value falls back to its default with a warning.
 - `[keybindings]` changes keys everywhere; `[keybindings.file_manager]` changes them only inside the file manager.
 - A binding replaces that action's default keys.
+- `[sonos]` is described under *Sonos speakers*, and `[mcp]` under *AI control (MCP)*.
 
 ```toml
 [general]
@@ -320,7 +324,12 @@ cargo clippy --all-targets -- -D warnings
 tests/fixtures/generate.ps1                  # regenerate audio fixtures (needs ffmpeg)
 ```
 
-None of the tests need a sound card.
+None of the tests need a sound card, and none use your network.
+
+- **Sonos tests:** they talk to a pretend speaker on localhost (`src/sonos/fake.rs`).
+  - The fake answers UPnP calls the way a real speaker does and fetches the songs it is given.
+  - It can also be told to refuse a file type, fail a command, or act as if blocked by a firewall.
+  - To check the real network, run `mp3blaster-rs --list-speakers`. It only searches and plays nothing.
 
 The terminal backend (`src/ui/backend.rs`) sends only the colours that changed, and each frame is written to the console in a single call. A test replays its output through a terminal emulator (`vt100`) and checks that every cell matches. To measure how much a visualiser sends to the terminal: `cargo test --release --lib hyperspace_terminal_load -- --ignored --nocapture`. The audio pipeline is tested by pulling samples from the renderer exactly as the device callback would. This proves, for example, that a split FLAC file plays back gaplessly and sample-identical to the original.
 
