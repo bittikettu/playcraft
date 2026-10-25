@@ -14,6 +14,7 @@ pub mod outputs;
 pub mod paths;
 pub mod platform;
 pub mod playlist;
+pub mod progress_fx;
 pub mod remote;
 pub mod session;
 pub mod spectrum;

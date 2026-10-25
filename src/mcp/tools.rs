@@ -216,7 +216,9 @@ or playlist), pause, toggle, stop, next (the queue first) or previous.",
         description: "Changes the visuals: style bars (spectrum analyser), matrix (rain of the \
 playing file's bytes), defrag (a Windows 98 disk defragmenter that finishes with the song) or \
 hyperspace (an audio-reactive 3D demoscene, the showpiece); fullscreen on or off; layout of the \
-small spectrum: wide strip, pane (inside Now Playing) or off. Every argument is optional.",
+small spectrum: wide strip, pane (inside Now Playing) or off; the progress bar: pacman (chomping \
+to the power pellet), nyan (a cat with a rainbow), waveform (the song's loudness as it plays) or \
+classic. Every argument is optional.",
         read_only: false,
         destructive: false,
         schema: || {
@@ -226,6 +228,7 @@ small spectrum: wide strip, pane (inside Now Playing) or off. Every argument is 
                     "style": { "type": "string", "enum": ["bars", "matrix", "defrag", "hyperspace"] },
                     "fullscreen": { "type": "boolean" },
                     "layout": { "type": "string", "enum": ["wide", "pane", "off"] },
+                    "progress": { "type": "string", "enum": ["pacman", "nyan", "waveform", "classic"] },
                 },
                 "additionalProperties": false,
             })

@@ -444,6 +444,8 @@ pub struct Symbols {
     pub ellipsis: &'static str,
     /// Between the end and the start of scrolling text.
     pub marquee_gap: &'static str,
+    /// Unicode pictures are allowed (Pac-Man, notes, stars).
+    pub unicode: bool,
 }
 
 impl Symbols {
@@ -459,6 +461,7 @@ impl Symbols {
         breadcrumb: " › ",
         ellipsis: "…",
         marquee_gap: "   ·   ",
+        unicode: true,
     };
 
     pub const ASCII: Symbols = Symbols {
@@ -482,6 +485,7 @@ impl Symbols {
         breadcrumb: " > ",
         ellipsis: "~",
         marquee_gap: "   *   ",
+        unicode: false,
     };
 
     pub fn by_name(charset: &str) -> Symbols {

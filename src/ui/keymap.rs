@@ -61,6 +61,7 @@ pub enum Action {
     SpectrumFullscreen,
     SpectrumLayout,
     VisualizerStyle,
+    ProgressStyle,
     Close,
     #[cfg(debug_assertions)]
     DebugPanic,
@@ -112,6 +113,7 @@ impl Action {
         Action::SpectrumFullscreen,
         Action::SpectrumLayout,
         Action::VisualizerStyle,
+        Action::ProgressStyle,
         Action::Close,
         Action::Quit,
     ];
@@ -164,6 +166,7 @@ impl Action {
             Action::SpectrumFullscreen => "spectrum_fullscreen",
             Action::SpectrumLayout => "spectrum_layout",
             Action::VisualizerStyle => "visualizer_style",
+            Action::ProgressStyle => "progress_style",
             Action::Close => "close",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "debug_panic",
@@ -223,6 +226,7 @@ impl Action {
             Action::SpectrumFullscreen => "Fullscreen spectrum analyser",
             Action::SpectrumLayout => "Spectrum: wide / in panel / off",
             Action::VisualizerStyle => "Visualizer: bars / Matrix / defragmenter / HYPERSPACE",
+            Action::ProgressStyle => "Progress bar: Pac-Man / Nyan cat / waveform / classic",
             Action::Close => "Close view / cancel",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "Crash on purpose (debug builds)",
@@ -417,6 +421,7 @@ impl Default for Keymap {
             (C::Global, SpectrumFullscreen, &["f"]),
             (C::Global, SpectrumLayout, &["w"]),
             (C::Global, VisualizerStyle, &["v"]),
+            (C::Global, ProgressStyle, &["p"]),
             (C::Global, Close, &["Esc"]),
             (C::Global, Quit, &["q", "Ctrl+c"]),
             (C::Playlist, RenameGroup, &["R"]),

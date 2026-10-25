@@ -19,6 +19,7 @@ use crate::matrix::MatrixRain;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
 use crate::outputs::media::MediaServer;
 use crate::playlist::engine::Engine;
+use crate::progress_fx::{ProgressFx, ProgressStyle};
 use crate::remote::RemoteCall;
 use crate::spectrum::SpectrumAnalyzer;
 
@@ -217,6 +218,9 @@ pub struct App {
     pub defrag: Defrag,
     /// The HYPERSPACE demoscene visualizer.
     pub hyperspace: Hyperspace,
+    pub progress_style: ProgressStyle,
+    /// The animated progress bar.
+    pub progress_fx: ProgressFx,
     /// View to return to when the fullscreen visualizer closes.
     pub(crate) view_before_visualizer: View,
     pub spectrum: SpectrumAnalyzer,
@@ -289,6 +293,8 @@ impl App {
             rain: MatrixRain::default(),
             defrag: Defrag::new(),
             hyperspace: Hyperspace::default(),
+            progress_style: ProgressStyle::PacMan,
+            progress_fx: ProgressFx::default(),
             view_before_visualizer: View::Playlist,
             spectrum: SpectrumAnalyzer::new(),
             last_spectrum_update: Instant::now(),
@@ -384,6 +390,8 @@ impl App {
             "hyperspace" => Visualizer::Hyperspace,
             _ => Visualizer::Bars,
         };
+        self.progress_style =
+            ProgressStyle::from_name(&config.ui.progress_style).unwrap_or(ProgressStyle::PacMan);
         if let Some(tuning) = crate::hyperspace::Tuning::preset(&config.ui.hyperspace_quality) {
             self.hyperspace.tuning = tuning;
         }
@@ -484,8 +492,26 @@ impl App {
         }
         let dt = self.last_spectrum_update.elapsed();
         self.last_spectrum_update = Instant::now();
-        if self.spectrum_visible() {
+        let reacts = self.progress_style.reacts();
+        if self.spectrum_visible() || reacts {
             self.spectrum.update(dt);
+        }
+        if reacts {
+            let shared = self.audio.shared();
+            let duration = self
+                .now
+                .as_ref()
+                .and_then(|n| n.duration)
+                .unwrap_or(shared.duration())
+                .as_secs_f64();
+            let at = (duration > 0.0 && self.now.is_some())
+                .then(|| (shared.position().as_secs_f64() / duration) as f32);
+            let playing = self.status() == PlaybackStatus::Playing;
+            let track = self.track_hash();
+            self.progress_fx
+                .update(dt.as_secs_f32(), self.spectrum.bands(), at, track, playing);
+        }
+        if self.spectrum_visible() {
             if self.visualizer == Visualizer::Matrix {
                 let shared = self.audio.shared();
                 let duration = shared.duration().as_secs_f64();
@@ -501,11 +527,7 @@ impl App {
             if self.visualizer == Visualizer::Hyperspace {
                 let wave = self.spectrum.waveform(256);
                 let title = self.now_playing_title();
-                let track = self.now.as_ref().map(|n| {
-                    let mut h = std::collections::hash_map::DefaultHasher::new();
-                    std::hash::Hash::hash(&n.path, &mut h);
-                    std::hash::Hasher::finish(&h)
-                });
+                let track = self.track_hash();
                 let playing = self.status() == PlaybackStatus::Playing;
                 self.hyperspace.update(
                     dt.as_secs_f32(),
@@ -516,6 +538,15 @@ impl App {
                 );
             }
         }
+    }
+
+    /// Tells one playing track from the next.
+    fn track_hash(&self) -> Option<u64> {
+        self.now.as_ref().map(|n| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&n.path, &mut h);
+            std::hash::Hasher::finish(&h)
+        })
     }
 
     /// "Artist - Title" (or the file name) of the playing track.
@@ -739,6 +770,13 @@ impl App {
                 self.banner(
                     BannerLevel::Info,
                     format!("Visualizer: {}", self.visualizer.label()),
+                );
+            }
+            Action::ProgressStyle => {
+                self.progress_style = self.progress_style.cycle();
+                self.banner(
+                    BannerLevel::Info,
+                    format!("Progress bar: {}", self.progress_style.label()),
                 );
             }
             Action::SpectrumLayout => {

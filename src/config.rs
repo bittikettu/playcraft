@@ -61,6 +61,8 @@ pub struct Ui {
     pub visualizer: String,
     /// HYPERSPACE quality: `high`, `balanced` or `fast` (less terminal output).
     pub hyperspace_quality: String,
+    /// `pacman`, `nyan`, `waveform` or `classic`.
+    pub progress_style: String,
     pub color_theme: String,
     pub charset: String,
     pub show_hidden: bool,
@@ -74,6 +76,7 @@ impl Default for Ui {
             spectrum_layout: "wide".into(),
             visualizer: "bars".into(),
             hyperspace_quality: "balanced".into(),
+            progress_style: "pacman".into(),
             color_theme: DEFAULT_THEME.into(),
             charset: "unicode".into(),
             show_hidden: false,
@@ -228,6 +231,13 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             ui.hyperspace_quality
         ));
         ui.hyperspace_quality = Ui::default().hyperspace_quality;
+    }
+    if crate::progress_fx::ProgressStyle::from_name(&ui.progress_style).is_none() {
+        warnings.push(format!(
+            "config: progress_style must be pacman, nyan, waveform or classic, not \"{}\"",
+            ui.progress_style
+        ));
+        ui.progress_style = Ui::default().progress_style;
     }
     if !["wide", "pane"].contains(&ui.spectrum_layout.as_str()) {
         warnings.push(format!(
@@ -418,6 +428,9 @@ pub fn default_file_text() -> String {
          visualizer = \"bars\"\n\
          # HYPERSPACE quality: high, balanced or fast (fast sends the least to the terminal)\n\
          hyperspace_quality = \"balanced\"\n\
+         # Progress bar: pacman (chomping to the power pellet), nyan (a cat with a rainbow),\n\
+         # waveform (the song's loudness as it plays) or classic; p cycles them\n\
+         progress_style = \"pacman\"\n\
          # THEME_LIST\n\
          color_theme = \"DEFAULT_THEME\"\n\
          # unicode or ascii (use ascii in the legacy console with raster fonts)\n\

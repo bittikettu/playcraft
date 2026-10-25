@@ -14,6 +14,7 @@ use crate::audio::AudioCommand;
 use crate::library::index::IndexState;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, TrackMetadata};
 use crate::outputs::Device;
+use crate::progress_fx::ProgressStyle;
 use crate::remote::RemoteCall;
 
 use super::app::{App, BannerLevel, SpectrumLayout, View, Visualizer};
@@ -159,6 +160,7 @@ struct VisualizerArgs {
     style: Option<Style>,
     fullscreen: Option<bool>,
     layout: Option<Layout>,
+    progress: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -429,7 +431,7 @@ impl App {
             "playback" => Ok(self.playback_remote(client, &parse(args)?)),
             "seek" => self.seek_remote(&parse(args)?),
             "set_volume" => self.volume_remote(&parse(args)?),
-            "set_visualizer" => Ok(self.visualizer_remote(client, &parse(args)?)),
+            "set_visualizer" => self.visualizer_remote(client, &parse(args)?),
             "set_play_options" => Ok(self.play_options_remote(client, &parse(args)?)),
             "set_theme" => self.theme_remote(client, &parse(args)?),
             "list_outputs" => {
@@ -486,6 +488,7 @@ impl App {
                 "style": visualizer_name(self.visualizer),
                 "fullscreen": self.view == View::Visualizer,
                 "layout": layout_name(self.spectrum_layout),
+                "progress": self.progress_style.name(),
             }),
         );
         status.insert("theme".into(), self.theme.name.into());
@@ -846,7 +849,12 @@ impl App {
         Ok(json!({ "volume": percent.round() }))
     }
 
-    fn visualizer_remote(&mut self, client: &str, args: &VisualizerArgs) -> Value {
+    fn visualizer_remote(&mut self, client: &str, args: &VisualizerArgs) -> Result<Value, String> {
+        if let Some(name) = &args.progress {
+            self.progress_style = ProgressStyle::from_name(name).ok_or_else(|| {
+                format!("progress must be pacman, nyan, waveform or classic, not \"{name}\"")
+            })?;
+        }
         if let Some(style) = args.style {
             self.visualizer = match style {
                 Style::Bars => Visualizer::Bars,
@@ -872,12 +880,16 @@ impl App {
         if fullscreen {
             text.push_str(", fullscreen");
         }
+        if args.progress.is_some() {
+            text.push_str(&format!(", progress bar {}", self.progress_style.label()));
+        }
         self.banner(BannerLevel::Info, text);
-        json!({
+        Ok(json!({
             "style": visualizer_name(self.visualizer),
             "fullscreen": fullscreen,
             "layout": layout_name(self.spectrum_layout),
-        })
+            "progress": self.progress_style.name(),
+        }))
     }
 
     fn play_options_remote(&mut self, client: &str, args: &PlayOptionsArgs) -> Value {
@@ -1242,10 +1254,22 @@ mod tests {
         );
         assert_eq!(
             v,
-            json!({ "style": "hyperspace", "fullscreen": true, "layout": "wide" })
+            json!({
+                "style": "hyperspace",
+                "fullscreen": true,
+                "layout": "wide",
+                "progress": "pacman",
+            })
         );
         assert_eq!(app.view, View::Visualizer);
         assert_eq!(app.visualizer, Visualizer::Hyperspace);
+        let v = tool(&mut app, "set_visualizer", json!({ "progress": "nyan" }));
+        assert_eq!(v["progress"], "nyan");
+        assert_eq!(app.progress_style, ProgressStyle::Nyan);
+        let err = app
+            .run_tool("Claude", "set_visualizer", json!({ "progress": "disco" }))
+            .unwrap_err();
+        assert!(err.contains("pacman, nyan"), "{err}");
         tool(
             &mut app,
             "set_visualizer",

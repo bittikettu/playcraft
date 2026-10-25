@@ -52,6 +52,13 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
     The scene adapts to its size. Small windows and the wide strip get a crisp version without glow or trails, with fewer sphere points. The strip spreads the scene sideways.
 
     How much the terminal has to draw is tunable with `hyperspace_quality = "high" | "balanced" | "fast"` (default `balanced`). If the terminal still can't keep up, the frame rate drops by itself.
+- **Animated progress bar:** `p` switches between four styles:
+  - **Pac-Man** (the default): he chomps along the bar, eating pellets on the way to the power pellet at the end of the song, with a ghost on his heels. He chomps faster when the music is louder, the pellets flash on the beat, and the ghost turns blue in the last ten seconds.
+  - **Nyan cat:** a cat flies ahead of a rippling rainbow into twinkling stars, and naps while the music is paused.
+  - **Waveform:** the loudness of the song so far, drawn as it plays in the spectrum's colours, with a note that flips on the beat.
+  - **Classic:** `[=====>-----]`.
+
+  With `charset = "ascii"`, the styles are drawn with plain characters (`C` for Pac-Man, `M` for the ghost).
 - **Now Playing:** the pane takes a third of the terminal width (28–48 columns). Titles, artists and albums too long for it scroll after a short pause.
 - **ReplayGain** (track or album, limited to avoid clipping) and logarithmic, click-free volume.
 - **Audio device handling:** device unplugged → playback pauses with a banner and resumes when the device returns. Windows default device changes → playback follows.
@@ -137,6 +144,7 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 | Play on: this computer, a Sonos speaker or a TV (Google Cast) | | `o` |
 | Fullscreen spectrum / spectrum layout | | `f` / `w` |
 | Visualiser: bars / Matrix rain / defragmenter / HYPERSPACE | | `v` |
+| Progress bar: Pac-Man / Nyan cat / waveform / classic | | `p` |
 | Quit | `q` | Ctrl+c |
 
 **Playlist view:**
@@ -187,6 +195,7 @@ charset = "ascii"           # for the legacy console with raster fonts
 spectrum_layout = "wide"    # wide (full-width strip) or pane (inside Now Playing)
 visualizer = "hyperspace"   # bars, matrix (rain of the file's bytes), defrag or hyperspace
 hyperspace_quality = "balanced"  # high, balanced or fast (fast suits slow terminals)
+progress_style = "pacman"   # or nyan, waveform, classic
 
 [keybindings]
 play_pause = ["Space", "c"]
@@ -282,7 +291,7 @@ claude mcp add mp3blaster -- "C:\path\to\mp3blaster-rs.exe" --mcp
 | `search_tracks` | Searches by words, genre, artist, album or year range, in the playlist and/or the music folder, optionally in random order. |
 | `queue_tracks`, `remove_from_queue`, `clear_queue` | Edit the play queue. `play_now` starts the first track at once. |
 | `playback`, `seek`, `set_volume` | Play, pause, toggle, stop, next and previous; seeking; volume. |
-| `set_visualizer` | Sets the style (bars, matrix, defrag, hyperspace), fullscreen, and the spectrum layout. |
+| `set_visualizer` | Sets the style (bars, matrix, defrag, hyperspace), fullscreen, the spectrum layout, and the progress bar style. |
 | `set_play_options`, `set_theme` | Play mode and repeat; the colour theme for this session. |
 | `list_outputs`, `set_output` | List this computer, the Sonos speakers and the Cast devices; move playback to one (by name, or a Sonos room) or back. |
 
@@ -323,8 +332,8 @@ library_dirs = ["D:/Music", "E:/Archive"]   # folders to search; empty = the mus
 - **Groups:** groups gain a `shuffle` flag, and the original MP3Blaster play modes are added.
 - **Themes:** the default is Dracula instead of `classic_blue`. The spec's four themes are kept, five VS Code themes are added, and there is an in-app picker (`t`).
 - **Additions:**
-  - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `v`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, `o`, and the play queue (`e`/Ins, `u`, `X`);
-  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, and the `[mcp]` and `[outputs]` sections;
+  - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `v`, `p`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, `o`, and the play queue (`e`/Ins, `u`, `X`);
+  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, `[ui] progress_style`, and the `[mcp]` and `[outputs]` sections;
   - AI control through MCP (`--mcp`), with a play queue and music folder search;
   - playing on Sonos speakers and Google Cast devices (`o`, `--list-speakers`);
   - the `[keybindings.file_manager]` section.
