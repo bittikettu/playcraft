@@ -13,10 +13,12 @@ use super::app::App;
 impl App {
     /// The current state as a session.
     pub fn snapshot(&self) -> Session {
-        let mut s = Session::new(
-            blst::to_json_value(&self.root),
-            self.audio.shared().volume(),
-        );
+        // While a speaker plays, the volume shown is the speaker's.
+        let volume = self
+            .cast
+            .as_ref()
+            .map_or_else(|| self.audio.shared().volume(), |c| c.local_volume);
+        let mut s = Session::new(blst::to_json_value(&self.root), volume);
         s.playlist_path = self.playlist_path.clone();
         s.cwd = self.cwd.clone();
         s.cursor = self.cursor;

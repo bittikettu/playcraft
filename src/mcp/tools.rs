@@ -266,6 +266,43 @@ track, group or all.",
             })
         },
     },
+    Tool {
+        name: "list_speakers",
+        title: "Speakers",
+        description: "Where the player can play: this computer and the Sonos speakers (rooms \
+and groups) found on the network, with the one playing marked active. The first call, or one \
+with refresh, searches the network, which takes a couple of seconds.",
+        read_only: true,
+        destructive: false,
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "refresh": { "type": "boolean", "default": false, "description": "Search the network again." },
+                },
+                "additionalProperties": false,
+            })
+        },
+    },
+    Tool {
+        name: "set_output",
+        title: "Play on a speaker",
+        description: "Moves playback to a Sonos speaker or group by name (as list_speakers shows \
+it, or one of its rooms), or back to \"this computer\". The music continues where it is; \
+volume then controls the speaker.",
+        read_only: false,
+        destructive: false,
+        schema: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "A speaker, group or room name, or \"this computer\"." },
+                },
+                "required": ["name"],
+                "additionalProperties": false,
+            })
+        },
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {

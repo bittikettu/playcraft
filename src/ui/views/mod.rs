@@ -7,6 +7,7 @@ mod help;
 mod hyperspace;
 mod log;
 mod now_playing;
+mod outputs;
 mod playlist;
 mod progress;
 mod queue;
@@ -95,6 +96,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
         Overlay::Log { scroll } => log::draw(f, app, centered(area, 90, 85), scroll),
         Overlay::Themes { cursor, original } => themes::draw(f, app, area, cursor, original),
         Overlay::Queue { cursor } => queue::draw(f, app, centered(area, 70, 70), cursor),
+        Overlay::Outputs { cursor } => outputs::draw(f, app, area, cursor),
         Overlay::None => {}
     }
 }

@@ -35,6 +35,7 @@ impl App {
         self.audio.send(AudioCommand::QueueNext(None));
         self.audio.send(AudioCommand::LoadAndPlay(path));
         self.pending_load = Some(uid);
+        self.cut_now = true;
     }
 
     pub(crate) fn play_pause(&mut self) {
@@ -71,6 +72,7 @@ impl App {
         self.now = None;
         self.pending_load = None;
         self.pending_next = None;
+        self.cut_now = true;
     }
 
     pub(crate) fn next_track(&mut self) {
@@ -166,7 +168,7 @@ impl App {
             })
     }
 
-    fn on_audio_event(&mut self, ev: AudioEvent) {
+    pub(crate) fn on_audio_event(&mut self, ev: AudioEvent) {
         match ev {
             AudioEvent::TrackStarted {
                 path,
@@ -175,6 +177,7 @@ impl App {
             } => {
                 let track = self.resolve(&path);
                 self.failures = 0;
+                self.track_starts += 1;
                 self.pending_load = None;
                 self.playing = track;
                 if let Some(uid) = track {

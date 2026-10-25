@@ -19,8 +19,10 @@ use crate::matrix::MatrixRain;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
 use crate::playlist::engine::Engine;
 use crate::remote::RemoteCall;
+use crate::sonos::media::MediaServer;
 use crate::spectrum::SpectrumAnalyzer;
 
+use super::cast::{Cast, SonosSettings, Speakers};
 use super::file_manager::{FileManager, FmMode};
 use super::keymap::{Action, Context, KeyBinding, Keymap};
 use super::prompt::{Prompt, PromptKind, PromptResult};
@@ -132,6 +134,10 @@ pub enum Overlay {
     Queue {
         cursor: usize,
     },
+    /// Where to play: `cursor` 0 is this computer, then the speaker groups.
+    Outputs {
+        cursor: usize,
+    },
 }
 
 /// A row of the playlist view: subgroups are listed before tracks.
@@ -226,6 +232,21 @@ pub struct App {
     pub remote: Option<Receiver<RemoteCall>>,
     /// The music folder index that assistants search besides the playlist.
     pub library: LibraryIndex,
+    /// The Sonos speaker group playing, when it is not this computer.
+    pub cast: Option<Cast>,
+    pub speakers: Speakers,
+    pub sonos: SonosSettings,
+    /// Serves songs to speakers (started when first needed).
+    pub(crate) media: Option<MediaServer>,
+    /// Counts track starts, so a speaker can tell a repeated track from the one it has.
+    pub(crate) track_starts: u64,
+    /// Set by an explicit play or stop: the speaker follows at once instead of finishing
+    /// its track first.
+    pub(crate) cut_now: bool,
+    /// When to unmute this computer after a cast ended with a pause.
+    pub(crate) unmute_at: Option<Instant>,
+    /// Tool calls waiting for a speaker search.
+    pub(crate) waiting_for_speakers: Vec<RemoteCall>,
 }
 
 impl App {
@@ -279,6 +300,14 @@ impl App {
             scans: Vec::new(),
             remote: None,
             library: LibraryIndex::new(Vec::new(), None),
+            cast: None,
+            speakers: Speakers::default(),
+            sonos: SonosSettings::default(),
+            media: None,
+            track_starts: 0,
+            cut_now: false,
+            unmute_at: None,
+            waiting_for_speakers: Vec::new(),
         };
         app.request_all_metadata();
         app
@@ -361,6 +390,8 @@ impl App {
         self.audio
             .send(AudioCommand::SetReplayGain(config.general.replaygain));
         self.fm.show_hidden = config.ui.show_hidden;
+        self.sonos.http_port = config.sonos.http_port;
+        self.sonos.hosts = config.sonos.hosts.clone();
         self.fm.go_to(
             crate::library::fs_browser::Location::Dir(config.music_dir()),
             None,
@@ -597,6 +628,7 @@ impl App {
                 return self.on_theme_key(action, cursor, original);
             }
             Overlay::Queue { cursor } => return self.on_queue_key(action, cursor),
+            Overlay::Outputs { cursor } => return self.on_outputs_key(action, cursor),
             Overlay::Help { scroll } => (scroll, false),
             // The log scrolls up from its newest line, so "up" means older.
             Overlay::Log { scroll } => (scroll, true),
@@ -658,8 +690,8 @@ impl App {
             Action::Stop => self.stop(),
             Action::NextTrack => self.next_track(),
             Action::PrevTrack => self.prev_track(),
-            Action::SeekForward => self.audio.send(AudioCommand::SeekRelative(SEEK_STEP_SECS)),
-            Action::SeekBackward => self.audio.send(AudioCommand::SeekRelative(-SEEK_STEP_SECS)),
+            Action::SeekForward => self.seek_by(SEEK_STEP_SECS),
+            Action::SeekBackward => self.seek_by(-SEEK_STEP_SECS),
             Action::VolumeUp => self.change_volume(VOLUME_STEP),
             Action::VolumeDown => self.change_volume(-VOLUME_STEP),
             Action::CyclePlayMode => {
@@ -699,6 +731,7 @@ impl App {
             Action::Help => self.overlay = Overlay::Help { scroll: 0 },
             Action::ShowLog => self.overlay = Overlay::Log { scroll: 0 },
             Action::ThemeSelector => self.open_theme_selector(),
+            Action::OutputSelector => self.open_outputs(),
             Action::SpectrumFullscreen => self.toggle_visualizer(),
             Action::VisualizerStyle => {
                 self.visualizer = self.visualizer.toggle();
@@ -787,6 +820,7 @@ impl App {
         let v = v.clamp(0.0, 1.0);
         self.audio.send(AudioCommand::SetVolume(v));
         self.audio.shared().set_volume(v);
+        self.cast_volume(v);
     }
 
     pub fn open_file_manager(&mut self, mode: FmMode) {

@@ -5,7 +5,7 @@ use mp3blaster_rs::audio::{AudioConfig, AudioHandle};
 use mp3blaster_rs::library::index::LibraryIndex;
 use mp3blaster_rs::ui::app::{App, BannerLevel};
 use mp3blaster_rs::{
-    config, headless, library, log_ring, mcp, paths, playlist, remote, session, ui,
+    config, headless, library, log_ring, mcp, paths, playlist, remote, session, sonos, ui,
 };
 
 #[derive(Parser, Debug)]
@@ -25,6 +25,10 @@ struct Cli {
     /// List audio output devices and exit.
     #[arg(long)]
     list_devices: bool,
+
+    /// List Sonos speakers on the network and exit.
+    #[arg(long)]
+    list_speakers: bool,
 
     /// Output device to use (case-insensitive part of its name).
     #[arg(long, value_name = "NAME")]
@@ -64,6 +68,18 @@ fn write_default_config(path: Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn list_speakers(hosts: &[String]) -> anyhow::Result<()> {
+    let wait = std::time::Duration::from_millis(1500);
+    let zones = sonos::discovery::discover(hosts, true, wait).map_err(anyhow::Error::msg)?;
+    if zones.is_empty() {
+        println!("no Sonos speakers found");
+    }
+    for zone in zones {
+        println!("{}  ({})", zone.name(), zone.coordinator.ip());
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     if cli.mcp {
@@ -89,6 +105,9 @@ fn main() -> anyhow::Result<()> {
         log::warn!("{w}");
     }
     let cfg = loaded.config;
+    if cli.list_speakers {
+        return list_speakers(&cfg.sonos.hosts);
+    }
     let audio_config = AudioConfig {
         output_device: cli.device.clone().or_else(|| cfg.output_device()),
         buffer_ms: cfg.general.audio_buffer_ms,

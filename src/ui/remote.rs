@@ -115,6 +115,21 @@ struct SeekArgs {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+struct SpeakersArgs {
+    refresh: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OutputArgs {
+    name: String,
+}
+
+/// Names that mean this computer in `set_output`.
+const LOCAL_NAMES: &[&str] = &["this computer", "computer", "local", "pc", "here"];
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 struct VolumeArgs {
     percent: Option<f64>,
     delta: Option<f64>,
@@ -342,15 +357,45 @@ impl App {
             return false;
         };
         let calls: Vec<RemoteCall> = calls.try_iter().collect();
-        for call in &calls {
-            let result = self.run_tool(&call.client, &call.tool, call.args.clone());
-            match &result {
-                Ok(_) => log::info!("{}: {} {}", call.client, call.tool, call.args),
-                Err(e) => log::warn!("{}: {} {} failed: {e}", call.client, call.tool, call.args),
+        let any = !calls.is_empty();
+        for call in calls {
+            if self.needs_speaker_search(&call) {
+                // Answered when the search is done (it takes a second or two).
+                self.search_speakers();
+                self.waiting_for_speakers.push(call);
+            } else {
+                self.answer_call(call);
             }
-            let _ = call.reply.send(result);
         }
-        !calls.is_empty()
+        any
+    }
+
+    /// Whether `call` should wait for a speaker search first.
+    fn needs_speaker_search(&self, call: &RemoteCall) -> bool {
+        if self.speakers.searching.is_some() {
+            return matches!(call.tool.as_str(), "list_speakers" | "set_output");
+        }
+        match call.tool.as_str() {
+            "list_speakers" => {
+                !self.speakers.searched || call.args.get("refresh") == Some(&Value::Bool(true))
+            }
+            "set_output" => {
+                let name = call.args.get("name").and_then(Value::as_str).unwrap_or("");
+                let local = LOCAL_NAMES.contains(&name.trim().to_lowercase().as_str());
+                !local && !self.speakers.searched
+            }
+            _ => false,
+        }
+    }
+
+    /// Runs a call and sends back its result.
+    pub(crate) fn answer_call(&mut self, call: RemoteCall) {
+        let result = self.run_tool(&call.client, &call.tool, call.args.clone());
+        match &result {
+            Ok(_) => log::info!("{}: {} {}", call.client, call.tool, call.args),
+            Err(e) => log::warn!("{}: {} {} failed: {e}", call.client, call.tool, call.args),
+        }
+        let _ = call.reply.send(result);
     }
 
     /// Runs one tool for `client` (the assistant's name, for banners).
@@ -377,6 +422,11 @@ impl App {
             "set_visualizer" => Ok(self.visualizer_remote(client, &parse(args)?)),
             "set_play_options" => Ok(self.play_options_remote(client, &parse(args)?)),
             "set_theme" => self.theme_remote(client, &parse(args)?),
+            "list_speakers" => {
+                let _: SpeakersArgs = parse(args)?;
+                Ok(self.speakers_json())
+            }
+            "set_output" => self.output_remote(client, &parse(args)?),
             other => Err(format!("unknown tool \"{other}\"")),
         }
     }
@@ -429,6 +479,7 @@ impl App {
             }),
         );
         status.insert("theme".into(), self.theme.name.into());
+        status.insert("output".into(), self.output_json());
         status.insert("playlist_tracks".into(), self.root.total_tracks().into());
         let index = self.library.read();
         let folders: Vec<String> = self
@@ -766,11 +817,9 @@ impl App {
             return Err("seconds must be a number".into());
         }
         if args.relative {
-            self.audio
-                .send(AudioCommand::SeekRelative(args.seconds.round() as i64));
+            self.seek_by(args.seconds.round() as i64);
         } else {
-            let to = Duration::from_secs_f64(args.seconds.max(0.0));
-            self.audio.send(AudioCommand::SeekAbsolute(to));
+            self.seek_to(Duration::from_secs_f64(args.seconds.max(0.0)));
         }
         Ok(json!({ "seeked": args.seconds, "relative": args.relative }))
     }
@@ -848,6 +897,100 @@ impl App {
             ),
         );
         json!({ "play_mode": mode_name(self.play_mode), "repeat": repeat_name(self.repeat) })
+    }
+
+    /// Where the player plays, for `get_status` and `list_speakers`.
+    fn output_json(&self) -> Value {
+        match &self.cast {
+            None => json!({ "name": "this computer", "kind": "computer" }),
+            Some(cast) => {
+                let mut out = json!({
+                    "name": cast.zone.name(),
+                    "kind": "sonos",
+                    "rooms": cast.zone.rooms,
+                });
+                if let Some(state) = cast.state() {
+                    out["speaker_state"] = state.label().into();
+                }
+                out
+            }
+        }
+    }
+
+    fn speakers_json(&self) -> Value {
+        let active = self.cast.as_ref().map(|c| c.zone.uuid.as_str());
+        let mut outputs = vec![json!({
+            "name": "this computer",
+            "kind": "computer",
+            "active": active.is_none(),
+        })];
+        outputs.extend(self.speakers.zones.iter().map(|z| {
+            json!({
+                "name": z.name(),
+                "kind": "sonos",
+                "rooms": z.rooms,
+                "active": active == Some(z.uuid.as_str()),
+            })
+        }));
+        let mut result = json!({ "outputs": outputs, "playing_on": self.output_name() });
+        if let Some(e) = &self.speakers.error {
+            result["error"] = e.as_str().into();
+        } else if self.speakers.zones.is_empty() {
+            result["note"] = "No Sonos speakers were found on this network. Speakers on another \
+                              subnet can be listed in config.toml under [sonos] hosts."
+                .into();
+        }
+        result
+    }
+
+    fn output_remote(&mut self, client: &str, args: &OutputArgs) -> Result<Value, String> {
+        let wanted = args.name.trim().to_lowercase();
+        if LOCAL_NAMES.contains(&wanted.as_str()) {
+            if self.cast.is_some() {
+                self.end_cast(false);
+            }
+            self.banner(
+                BannerLevel::Info,
+                format!("{client}: playing on this computer"),
+            );
+            return Ok(self.output_json());
+        }
+        let zones = &self.speakers.zones;
+        let found = zones
+            .iter()
+            .find(|z| z.name().to_lowercase() == wanted)
+            .or_else(|| {
+                zones
+                    .iter()
+                    .find(|z| z.rooms.iter().any(|r| r.to_lowercase() == wanted))
+            })
+            .or_else(|| {
+                zones
+                    .iter()
+                    .find(|z| z.name().to_lowercase().contains(&wanted))
+            })
+            .cloned();
+        let Some(zone) = found else {
+            let mut names: Vec<String> = vec!["this computer".into()];
+            names.extend(zones.iter().map(|z| z.name()));
+            return Err(format!(
+                "no speaker called \"{}\" (outputs: {})",
+                args.name,
+                names.join(", ")
+            ));
+        };
+        self.start_cast(zone);
+        match &self.cast {
+            Some(_) => {
+                let text = format!("{client}: playing on {}", self.output_name());
+                self.banner(BannerLevel::Info, text);
+                Ok(self.output_json())
+            }
+            None => Err(self
+                .banner
+                .as_ref()
+                .map_or_else(|| "could not start".into(), |b| b.text.clone())),
+        }
     }
 
     fn theme_remote(&mut self, client: &str, args: &ThemeArgs) -> Result<Value, String> {
@@ -1177,5 +1320,71 @@ mod tests {
         assert_eq!(app.visualizer, Visualizer::Matrix);
         let banner = &app.banner.as_ref().unwrap().text;
         assert!(banner.starts_with("Claude Code: Matrix"), "{banner}");
+    }
+
+    /// Calls `tool` over the control socket, running the player's loop until it answers.
+    fn call_over_socket(app: &mut App, tool: &str, args: Value) -> Result<Value, String> {
+        let state = tempfile::tempdir().unwrap();
+        let (_server, calls) = crate::remote::ControlServer::start(state.path()).unwrap();
+        app.remote = Some(calls);
+        let dir = state.path().to_path_buf();
+        let tool = tool.to_string();
+        let client = std::thread::spawn(move || crate::remote::call(&dir, "Claude", &tool, args));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !client.is_finished() {
+            app.process_remote_calls();
+            app.process_outputs();
+            assert!(Instant::now() < deadline, "no answer");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        client.join().unwrap().map_err(|e| format!("{e:?}"))
+    }
+
+    #[test]
+    fn speakers_are_searched_for_listed_and_chosen() {
+        let (mut app, _music) = setup();
+        let fake = crate::sonos::fake::FakeSonos::start("Kitchen");
+        app.sonos.hosts = vec![fake.addr.to_string()];
+
+        // The first call waits for the search.
+        let listed = call_over_socket(&mut app, "list_speakers", json!({})).unwrap();
+        let names: Vec<&str> = listed["outputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["this computer", "Kitchen"]);
+        assert_eq!(listed["outputs"][0]["active"], true);
+        assert_eq!(listed["playing_on"], "this computer");
+
+        let err = app
+            .run_tool("Claude", "set_output", json!({ "name": "Garage" }))
+            .unwrap_err();
+        assert!(err.contains("outputs: this computer, Kitchen"), "{err}");
+        let out = tool(&mut app, "set_output", json!({ "name": "kitchen" }));
+        assert_eq!(out["name"], "Kitchen");
+        assert_eq!(out["kind"], "sonos");
+        assert_eq!(app.output_name(), "Kitchen");
+        let banner = &app.banner.as_ref().unwrap().text;
+        assert_eq!(banner, "Claude: playing on Kitchen");
+        let status = tool(&mut app, "get_status", json!({}));
+        assert_eq!(status["output"]["name"], "Kitchen");
+
+        let out = tool(&mut app, "set_output", json!({ "name": "This computer" }));
+        assert_eq!(out["kind"], "computer");
+        assert!(app.cast.is_none());
+        let status = tool(&mut app, "get_status", json!({}));
+        assert_eq!(status["output"]["name"], "this computer");
+    }
+
+    #[test]
+    fn choosing_a_speaker_before_any_search_waits_for_one() {
+        let (mut app, _music) = setup();
+        let fake = crate::sonos::fake::FakeSonos::start("Den");
+        app.sonos.hosts = vec![fake.addr.to_string()];
+        let out = call_over_socket(&mut app, "set_output", json!({ "name": "Den" })).unwrap();
+        assert_eq!(out["name"], "Den");
+        assert!(app.speakers.searched);
     }
 }

@@ -26,7 +26,8 @@ artists exist; search_tracks finds tracks (turn a mood into genres or artists yo
 shuffle for variety); queue_tracks queues them by path, with play_now to start at once. Queued \
 tracks play before the normal playlist order, which resumes afterwards. get_status tells what is \
 playing and what is queued. set_visualizer switches the visuals and fullscreen (hyperspace is \
-the showpiece). If a tool says the player is not running, ask the user to start mp3blaster-rs.";
+the showpiece). list_speakers and set_output move playback to a Sonos speaker and back. If a \
+tool says the player is not running, ask the user to start mp3blaster-rs.";
 
 /// One MCP connection.
 #[derive(Debug, Default)]

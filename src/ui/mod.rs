@@ -2,6 +2,7 @@
 
 pub mod app;
 mod backend;
+mod cast;
 mod editing;
 pub mod file_manager;
 pub mod keymap;
@@ -121,6 +122,7 @@ pub fn run(app: &mut App, mut autosave: Option<Autosave>) -> anyhow::Result<()> 
     let mut terminal = init_terminal()?;
     let result = event_loop(&mut terminal, app, autosave.as_mut());
     ratatui::restore();
+    app.close_outputs();
     if let Some(autosave) = autosave.as_mut() {
         autosave.save(app);
     }
@@ -147,6 +149,7 @@ fn event_loop(
         dirty |= app.process_audio_events();
         dirty |= app.process_background();
         dirty |= app.process_remote_calls();
+        dirty |= app.process_outputs();
         dirty |= app.tick();
         let animating = app.is_animating();
         if dirty || (animating && last_draw.elapsed() >= frame_interval) {
@@ -209,7 +212,11 @@ pub(crate) mod tests {
         let audio = AudioHandle::spawn_with_backend(AudioConfig::default(), Box::new(backend));
         // Keep the renderer alive for the lifetime of the test.
         std::mem::forget(rx.recv().ok());
-        App::new(audio, root)
+        let mut app = App::new(audio, root);
+        // Speakers in tests are fakes on localhost.
+        app.sonos.search_network = false;
+        app.sonos.bind = std::net::Ipv4Addr::LOCALHOST.into();
+        app
     }
 
     pub(crate) fn render(app: &mut App, width: u16, height: u16) -> String {

@@ -79,6 +79,13 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, with_spectrum: bool) -> bo
             }
         }
     }
+    if let Some(cast) = &app.cast {
+        let mut on = cast.zone.name();
+        if cast.state() == Some(crate::sonos::control::TransportState::Transitioning) {
+            on.push_str(" (buffering)");
+        }
+        lines.push(field("Sonos:  ", on));
+    }
     // What plays next: the gapless successor, or the head of the queue while stopped.
     let next = app
         .pending_next

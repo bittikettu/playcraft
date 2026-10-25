@@ -15,5 +15,6 @@ pub mod platform;
 pub mod playlist;
 pub mod remote;
 pub mod session;
+pub mod sonos;
 pub mod spectrum;
 pub mod ui;

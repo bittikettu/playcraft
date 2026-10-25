@@ -23,6 +23,8 @@ pub struct Shared {
     // Written by the controller, read by the callback.
     pub paused: AtomicBool,
     gain_bits: AtomicU32,
+    /// Silences the output (while a network speaker plays) without changing the volume.
+    muted: AtomicBool,
     pub flush_request: AtomicU64,
 
     // Written by the callback.
@@ -44,6 +46,7 @@ impl Default for Shared {
         Shared {
             paused: AtomicBool::new(false),
             gain_bits: AtomicU32::new(1f32.to_bits()),
+            muted: AtomicBool::new(false),
             flush_request: AtomicU64::new(0),
             flush_ack: AtomicU64::new(0),
             frames_played: AtomicU64::new(0),
@@ -59,7 +62,19 @@ impl Default for Shared {
 
 impl Shared {
     pub fn gain(&self) -> f32 {
-        f32::from_bits(self.gain_bits.load(Ordering::Relaxed))
+        if self.muted() {
+            0.0
+        } else {
+            f32::from_bits(self.gain_bits.load(Ordering::Relaxed))
+        }
+    }
+
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
+    }
+
+    pub fn muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
     }
 
     /// Sets the volume (0.0–1.0). The callback ramps to the matching gain.
