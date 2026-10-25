@@ -17,12 +17,12 @@ use crate::library::index::LibraryIndex;
 use crate::library::scanner::MetadataScanner;
 use crate::matrix::MatrixRain;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, Track, TrackMetadata};
+use crate::outputs::media::MediaServer;
 use crate::playlist::engine::Engine;
 use crate::remote::RemoteCall;
-use crate::sonos::media::MediaServer;
 use crate::spectrum::SpectrumAnalyzer;
 
-use super::cast::{Cast, SonosSettings, Speakers};
+use super::cast::{Cast, Devices, OutputSettings};
 use super::file_manager::{FileManager, FmMode};
 use super::keymap::{Action, Context, KeyBinding, Keymap};
 use super::prompt::{Prompt, PromptKind, PromptResult};
@@ -232,21 +232,22 @@ pub struct App {
     pub remote: Option<Receiver<RemoteCall>>,
     /// The music folder index that assistants search besides the playlist.
     pub library: LibraryIndex,
-    /// The Sonos speaker group playing, when it is not this computer.
+    /// The network device playing (a Sonos speaker or a Google Cast device), when it is not
+    /// this computer.
     pub cast: Option<Cast>,
-    pub speakers: Speakers,
-    pub sonos: SonosSettings,
-    /// Serves songs to speakers (started when first needed).
+    pub devices: Devices,
+    pub outputs: OutputSettings,
+    /// Serves songs to devices (started when first needed).
     pub(crate) media: Option<MediaServer>,
-    /// Counts track starts, so a speaker can tell a repeated track from the one it has.
+    /// Counts track starts, so a device can tell a repeated track from the one it has.
     pub(crate) track_starts: u64,
-    /// Set by an explicit play or stop: the speaker follows at once instead of finishing
+    /// Set by an explicit play or stop: the device follows at once instead of finishing
     /// its track first.
     pub(crate) cut_now: bool,
     /// When to unmute this computer after a cast ended with a pause.
     pub(crate) unmute_at: Option<Instant>,
-    /// Tool calls waiting for a speaker search.
-    pub(crate) waiting_for_speakers: Vec<RemoteCall>,
+    /// Tool calls waiting for a device search.
+    pub(crate) waiting_for_devices: Vec<RemoteCall>,
 }
 
 impl App {
@@ -301,13 +302,13 @@ impl App {
             remote: None,
             library: LibraryIndex::new(Vec::new(), None),
             cast: None,
-            speakers: Speakers::default(),
-            sonos: SonosSettings::default(),
+            devices: Devices::default(),
+            outputs: OutputSettings::default(),
             media: None,
             track_starts: 0,
             cut_now: false,
             unmute_at: None,
-            waiting_for_speakers: Vec::new(),
+            waiting_for_devices: Vec::new(),
         };
         app.request_all_metadata();
         app
@@ -390,8 +391,8 @@ impl App {
         self.audio
             .send(AudioCommand::SetReplayGain(config.general.replaygain));
         self.fm.show_hidden = config.ui.show_hidden;
-        self.sonos.http_port = config.sonos.http_port;
-        self.sonos.hosts = config.sonos.hosts.clone();
+        self.outputs.http_port = config.outputs.http_port;
+        self.outputs.sonos_hosts = config.outputs.sonos_hosts.clone();
         self.fm.go_to(
             crate::library::fs_browser::Location::Dir(config.music_dir()),
             None,

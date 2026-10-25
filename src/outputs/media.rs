@@ -1,7 +1,7 @@
-//! The media server Sonos speakers fetch songs from. Only files handed to `publish` are
-//! served, under a random secret in the URL; byte ranges let the speaker seek. A song can
-//! also be published as WAV, converted while it is sent (`wav`), for speakers that cannot
-//! play the original.
+//! The media server Sonos speakers and Cast devices fetch songs from. Only files handed to
+//! `publish` are served, under a random secret in the URL; byte ranges let the device seek.
+//! A song can also be published as WAV, converted while it is sent (`wav`), for devices that
+//! cannot play the original, and with its cover art.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -21,7 +21,7 @@ const MAX_CONNECTIONS: usize = 16;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(3600);
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The MIME type speakers expect for an audio file, by extension.
+/// The MIME type devices expect for an audio (or cover image) file, by extension.
 pub fn mime_type(path: &Path) -> &'static str {
     let ext = path
         .extension()
@@ -34,6 +34,8 @@ pub fn mime_type(path: &Path) -> &'static str {
         Some("wav") => "audio/wav",
         Some("aac") => "audio/aac",
         Some("m4a" | "mp4") => "audio/mp4",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("png") => "image/png",
         _ => "application/octet-stream",
     }
 }
@@ -46,11 +48,74 @@ pub fn local_ip_for(peer: SocketAddr) -> io::Result<IpAddr> {
     Ok(socket.local_addr()?.ip())
 }
 
+/// Image files in an album's folder that hold its cover, best first.
+const COVER_NAMES: &[&str] = &["cover", "folder", "front", "albumart", "album"];
+
+/// The image type of picture data, by its first bytes (JPEG and PNG, which devices show).
+fn image_type(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if data.starts_with(b"\x89PNG") {
+        Some("image/png")
+    } else {
+        None
+    }
+}
+
+/// The front cover in `song`'s tags (else its first picture), with its MIME type.
+fn embedded_art(song: &Path) -> Option<(Vec<u8>, &'static str)> {
+    use lofty::file::TaggedFileExt;
+    use lofty::picture::PictureType;
+    let tagged = lofty::read_from_path(song).ok()?;
+    let pictures: Vec<_> = tagged
+        .tags()
+        .iter()
+        .flat_map(|t| t.pictures())
+        .filter(|p| image_type(p.data()).is_some())
+        .collect();
+    let picture = pictures
+        .iter()
+        .find(|p| p.pic_type() == PictureType::CoverFront)
+        .or(pictures.first())?;
+    let data = picture.data().to_vec();
+    let mime = image_type(&data)?;
+    Some((data, mime))
+}
+
+/// A cover image next to `song`, such as `cover.jpg` or `folder.png`.
+fn folder_art(song: &Path) -> Option<PathBuf> {
+    let rank = |p: &Path| {
+        let stem = p.file_stem()?.to_str()?.to_ascii_lowercase();
+        let ext = p.extension()?.to_str()?.to_ascii_lowercase();
+        if !["jpg", "jpeg", "png"].contains(&ext.as_str()) {
+            return None;
+        }
+        COVER_NAMES.iter().position(|n| *n == stem)
+    };
+    std::fs::read_dir(song.parent()?)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter_map(|p| rank(&p).map(|r| (r, p)))
+        .min()
+        .map(|(_, p)| p)
+}
+
+/// How a published file is sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Kind {
+    /// As it is.
+    File,
+    /// Converted to WAV.
+    Wav,
+    /// The picture in its tags.
+    Art,
+}
+
 #[derive(Default)]
 struct Published {
-    /// Each file, and whether it is sent as WAV.
-    files: Vec<(PathBuf, bool)>,
-    ids: HashMap<(PathBuf, bool), usize>,
+    files: Vec<(PathBuf, Kind)>,
+    ids: HashMap<(PathBuf, Kind), usize>,
     /// Requests per file, to tell whether a speaker could reach us at all.
     fetches: Vec<u32>,
 }
@@ -109,10 +174,9 @@ impl MediaServer {
         self.port
     }
 
-    /// The URL path that serves `path`, as it is or as WAV (published on first use).
-    pub fn publish(&self, path: &Path, wav: bool) -> String {
+    fn publish_as(&self, path: &Path, kind: Kind, ext: &str) -> String {
         let mut p = self.published.lock().unwrap_or_else(|e| e.into_inner());
-        let key = (path.to_path_buf(), wav);
+        let key = (path.to_path_buf(), kind);
         let id = match p.ids.get(&key) {
             Some(&id) => id,
             None => {
@@ -123,24 +187,45 @@ impl MediaServer {
                 id
             }
         };
-        let ext = if wav {
-            "wav".to_string()
-        } else {
-            path.extension()
-                .and_then(|e| e.to_str())
-                .map_or_else(|| "bin".to_string(), str::to_ascii_lowercase)
-        };
         format!("/{}/{id}.{ext}", self.secret)
     }
 
-    /// The full URL of `path` (as WAV with `wav`) for a speaker at `speaker`.
-    pub fn url_for(&self, path: &Path, wav: bool, speaker: SocketAddr) -> io::Result<String> {
-        let ip = local_ip_for(speaker)?;
-        Ok(format!(
-            "http://{}{}",
-            SocketAddr::new(ip, self.port),
-            self.publish(path, wav)
-        ))
+    /// The URL path that serves `path`, as it is or as WAV (published on first use).
+    pub fn publish(&self, path: &Path, wav: bool) -> String {
+        if wav {
+            return self.publish_as(path, Kind::Wav, "wav");
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map_or_else(|| "bin".to_string(), str::to_ascii_lowercase);
+        self.publish_as(path, Kind::File, &ext)
+    }
+
+    /// The URL path of `song`'s cover art: the picture in its tags, or a cover image in its
+    /// folder. `None` if it has neither.
+    pub fn publish_art(&self, song: &Path) -> Option<String> {
+        if let Some((_, mime)) = embedded_art(song) {
+            let ext = if mime == "image/png" { "png" } else { "jpg" };
+            return Some(self.publish_as(song, Kind::Art, ext));
+        }
+        folder_art(song).map(|cover| self.publish(&cover, false))
+    }
+
+    fn url(&self, path: &str, device: SocketAddr) -> io::Result<String> {
+        let ip = local_ip_for(device)?;
+        Ok(format!("http://{}{path}", SocketAddr::new(ip, self.port)))
+    }
+
+    /// The full URL of `path` (as WAV with `wav`) for a device at `device`.
+    pub fn url_for(&self, path: &Path, wav: bool, device: SocketAddr) -> io::Result<String> {
+        self.url(&self.publish(path, wav), device)
+    }
+
+    /// The full URL of `song`'s cover art for a device at `device`, if it has any.
+    pub fn art_url_for(&self, song: &Path, device: SocketAddr) -> Option<String> {
+        let path = self.publish_art(song)?;
+        self.url(&path, device).ok()
     }
 
     /// How many requests the file behind `url` (from `url_for`/`publish`) has had.
@@ -215,25 +300,43 @@ fn serve(mut stream: TcpStream, secret: &str, published: &Mutex<Published>) -> i
     }
     let file = file_id(target, secret).and_then(|id| {
         let mut p = published.lock().unwrap_or_else(|e| e.into_inner());
-        let (path, wav) = p.files.get(id).cloned()?;
+        let (path, kind) = p.files.get(id).cloned()?;
         if p.fetches[id] == 0 {
+            let how = match kind {
+                Kind::File => "",
+                Kind::Wav => " as WAV",
+                Kind::Art => "'s cover",
+            };
             log::info!(
-                "{} is fetching {}{}",
+                "{} is fetching {}{how}",
                 stream
                     .peer_addr()
-                    .map_or("a speaker".into(), |a| a.ip().to_string()),
+                    .map_or("a device".into(), |a| a.ip().to_string()),
                 path.display(),
-                if wav { " as WAV" } else { "" }
             );
         }
         p.fetches[id] += 1;
-        Some((path, wav))
+        Some((path, kind))
     });
-    let Some((path, wav)) = file else {
+    let Some((path, kind)) = file else {
         return reply(&mut stream, "404 Not Found", "");
     };
-    if wav {
-        return serve_wav(stream, &path, method, &headers);
+    match kind {
+        Kind::File => {}
+        Kind::Wav => return serve_wav(stream, &path, method, &headers),
+        Kind::Art => {
+            let Some((data, mime)) = embedded_art(&path) else {
+                return reply(&mut stream, "404 Not Found", "");
+            };
+            let Some((start, count)) = respond(&mut stream, mime, data.len() as u64, &headers)?
+            else {
+                return Ok(());
+            };
+            if method == "GET" {
+                stream.write_all(&data[start as usize..(start + count) as usize])?;
+            }
+            return stream.flush();
+        }
     }
     let mut file = match File::open(&path) {
         Ok(f) => f,
@@ -416,6 +519,57 @@ mod tests {
             "{head}"
         );
         assert_eq!(tail.len(), 1000);
+    }
+
+    /// A minimal PNG: the signature and an empty IHDR-like chunk are enough to be recognised.
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0";
+
+    #[test]
+    fn serves_cover_art_from_tags_or_the_folder() {
+        use lofty::config::WriteOptions;
+        use lofty::file::TaggedFileExt;
+        use lofty::picture::{Picture, PictureType};
+        use lofty::tag::TagExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tagged.flac");
+        let server = MediaServer::start(Ipv4Addr::LOCALHOST.into(), 0).unwrap();
+        let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), server.port());
+
+        // No art at all.
+        let bare = dir.path().join("bare.flac");
+        std::fs::copy(&fixture, &bare).unwrap();
+        assert_eq!(server.publish_art(&bare), None);
+
+        // A cover image in the folder ("folder.jpg" loses to "cover.jpg").
+        let album = dir.path().join("album");
+        std::fs::create_dir(&album).unwrap();
+        let song = album.join("01.flac");
+        std::fs::copy(&fixture, &song).unwrap();
+        std::fs::write(album.join("folder.jpg"), b"\xFF\xD8\xFFfolder").unwrap();
+        std::fs::write(album.join("Cover.JPG"), b"\xFF\xD8\xFFcover").unwrap();
+        let art = server.publish_art(&song).unwrap();
+        assert!(art.ends_with(".jpg"), "{art}");
+        let (status, head, body) = get(addr, &art, None);
+        assert_eq!(status, 200);
+        assert!(head.contains("Content-Type: image/jpeg"), "{head}");
+        assert_eq!(body, b"\xFF\xD8\xFFcover");
+
+        // A picture in the tags wins.
+        let mut tagged = lofty::read_from_path(&song).unwrap();
+        let tag = tagged.primary_tag_mut().unwrap();
+        let mut picture = Picture::from_reader(&mut &PNG[..]).unwrap();
+        picture.set_pic_type(PictureType::CoverFront);
+        tag.push_picture(picture);
+        tag.save_to_path(&song, WriteOptions::default()).unwrap();
+        let art = server.publish_art(&song).unwrap();
+        assert!(art.ends_with(".png"), "{art}");
+        let (status, head, body) = get(addr, &art, None);
+        assert_eq!(status, 200);
+        assert!(head.contains("Content-Type: image/png"), "{head}");
+        assert_eq!(body, PNG);
+        let url = server.art_url_for(&song, addr).unwrap();
+        assert!(url.starts_with("http://127.0.0.1:"), "{url}");
     }
 
     #[test]

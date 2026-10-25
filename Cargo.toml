@@ -35,6 +35,7 @@ regex-lite = "0.1.9"
 ringbuf = "0.5.3"
 roxmltree = "0.21.2"
 rubato = "5.0.1"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -47,6 +48,7 @@ unicode-width = "0.2"
 walkdir = "2.5.0"
 
 [dev-dependencies]
+rcgen = "0.14.10"
 tempfile = "3.27.0"
 vt100 = "0.18.1"
 

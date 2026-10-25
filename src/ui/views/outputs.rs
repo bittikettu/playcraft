@@ -8,7 +8,7 @@ use super::{justify, truncate};
 use crate::ui::app::App;
 use crate::ui::keymap::{Action, Context};
 
-/// The output picker: this computer, then the Sonos speaker groups found.
+/// The output picker: this computer, then the Sonos speakers and Cast devices found.
 pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, cursor: usize) {
     let theme = &app.theme;
     let ell = app.symbols.ellipsis;
@@ -18,32 +18,33 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, cursor: usize) {
         key(Action::Activate),
         key(Action::Close)
     );
-    let speakers = &app.speakers;
-    let active = app.cast.as_ref().map(|c| c.zone.uuid.as_str());
-    let mut names = vec![("This computer".to_string(), active.is_none())];
+    let devices = &app.devices;
+    let active = app.cast.as_ref().map(|c| c.device.id());
+    // Name, what it is, and whether it plays now.
+    let mut names = vec![("This computer".to_string(), "", active.is_none())];
     names.extend(
-        speakers
-            .zones
+        devices
+            .list
             .iter()
-            .map(|z| (z.name(), active == Some(z.uuid.as_str()))),
+            .map(|d| (d.name(), d.kind(), active == Some(d.id()))),
     );
 
     let mut notes: Vec<(String, ratatui::style::Style)> = Vec::new();
-    if speakers.searching.is_some() {
-        notes.push((format!("Searching for Sonos speakers{ell}"), theme.dim));
-    } else if let Some(e) = &speakers.error {
-        notes.push((format!("Sonos: {e}"), theme.warning));
-    } else if speakers.searched && speakers.zones.is_empty() {
-        notes.push(("No Sonos speakers found on this network.".into(), theme.dim));
+    if devices.searching.is_some() {
+        notes.push((format!("Searching for speakers and TVs{ell}"), theme.dim));
+    } else if let Some(e) = &devices.error {
+        notes.push((format!("Search: {e}"), theme.warning));
+    } else if devices.searched && devices.list.is_empty() {
+        notes.push(("No Sonos speakers or Cast devices found.".into(), theme.dim));
         notes.push((
-            "Speakers elsewhere: list them under [sonos] hosts in config.toml.".into(),
+            "Sonos elsewhere: list it under [outputs] sonos_hosts in config.toml.".into(),
             theme.dim,
         ));
     }
 
     let widest = names
         .iter()
-        .map(|(n, _)| n.width() + 12)
+        .map(|(n, _, _)| n.width() + 16)
         .chain(notes.iter().map(|(n, _)| n.width() + 2))
         .chain([hint.width() + 2, 34])
         .max()
@@ -69,9 +70,9 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, cursor: usize) {
 
     let cursor = cursor.min(names.len() - 1);
     let mut lines = vec![Line::default()];
-    for (i, (name, playing)) in names.iter().enumerate() {
+    for (i, (name, kind, playing)) in names.iter().enumerate() {
         let marker = if i == cursor { app.symbols.cursor } else { " " };
-        let tag = if *playing { "[playing]" } else { "" };
+        let tag = if *playing { "[playing]" } else { kind };
         let style = if i == cursor {
             theme.base.patch(theme.cursor)
         } else {

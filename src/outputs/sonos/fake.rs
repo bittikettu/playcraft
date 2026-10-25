@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use super::control::{format_time, parse_time};
 use super::discovery::Zone;
-use super::http::{self, header, xml_escape};
+use crate::outputs::http::{self, header, xml_escape};
 
 #[derive(Debug, Default)]
 pub struct FakeState {
@@ -97,7 +97,7 @@ fn argument(body: &str, name: &str) -> String {
 }
 
 /// Fetches `url` (http://host:port/path) the way a speaker does.
-fn fetch(url: &str) -> Option<Vec<u8>> {
+pub(crate) fn fetch(url: &str) -> Option<Vec<u8>> {
     let rest = url.strip_prefix("http://")?;
     let (host, path) = rest.split_at(rest.find('/')?);
     let mut stream = TcpStream::connect(host).ok()?;

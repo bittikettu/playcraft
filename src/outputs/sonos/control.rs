@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use super::http::{self, xml_escape};
+use crate::outputs::http::{self, xml_escape};
+use crate::outputs::link::TransportState;
 
 const AV_TRANSPORT: Service = Service {
     path: "/MediaRenderer/AVTransport/Control",
@@ -67,33 +68,13 @@ fn upnp_message(code: u32) -> String {
     }
 }
 
-/// What a speaker's transport is doing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransportState {
-    Playing,
-    Paused,
-    Stopped,
-    /// Buffering, or switching tracks.
-    Transitioning,
-}
-
-impl TransportState {
-    pub fn parse(s: &str) -> TransportState {
-        match s {
-            "PLAYING" => TransportState::Playing,
-            "PAUSED_PLAYBACK" => TransportState::Paused,
-            "TRANSITIONING" => TransportState::Transitioning,
-            _ => TransportState::Stopped,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            TransportState::Playing => "playing",
-            TransportState::Paused => "paused",
-            TransportState::Stopped => "stopped",
-            TransportState::Transitioning => "buffering",
-        }
+/// A speaker's `CurrentTransportState`.
+fn parse_state(s: &str) -> TransportState {
+    match s {
+        "PLAYING" => TransportState::Playing,
+        "PAUSED_PLAYBACK" => TransportState::Paused,
+        "TRANSITIONING" => TransportState::Transitioning,
+        _ => TransportState::Stopped,
     }
 }
 
@@ -238,7 +219,7 @@ impl Speaker {
                 action: "GetTransportInfo",
                 detail: "no CurrentTransportState".into(),
             })?;
-        Ok(TransportState::parse(state))
+        Ok(parse_state(state))
     }
 
     pub fn position(&self) -> Result<PositionInfo, SonosError> {

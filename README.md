@@ -57,7 +57,7 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
 - **Audio device handling:** device unplugged → playback pauses with a banner and resumes when the device returns. Windows default device changes → playback follows.
 - **Sessions:** the playlist, track, position, volume and modes are restored on the next start. They are saved every 30 s, on quit, and when the console window is closed.
 - **Themes:** Dracula (the default), Tokyo Night, One Dark, Monokai, Nord, Catppuccin, Gruvbox, the original Classic Blue, and Monochrome. Press `t` to open the picker, which previews each theme live and saves your choice to `config.toml`.
-- **Sonos speakers:** press `o` to play on a Sonos speaker or group on your network, and back on the computer. The playlist, queue, keys and visualizers keep working, in step with the speaker. See *Sonos speakers*.
+- **Speakers and TVs:** press `o` to play on a Sonos speaker or group, or a Google Cast device such as an Android TV or a Chromecast, and back on the computer. The playlist, queue, keys and visualizers keep working, in step with the device. See *Speakers and TVs*.
 - **Configuration:** an ASCII mode for legacy consoles and fully rebindable keys.
 
 ## Building
@@ -88,9 +88,9 @@ docker run -it --rm -v "D:\Music:/music:ro" mp3blaster      # play your own musi
   - the music folder is `/music`, which holds the test tones unless you mount your own;
   - the config is `~/.config/mp3blaster-rs/config.toml`;
   - nothing is kept after the container exits.
-- **Sonos speakers:** the container's own network cannot see your speakers.
-  - On a Linux host, add `--network host`, so the speaker search and the speakers' song requests reach the player.
-  - Docker Desktop (Windows and macOS) runs containers in a virtual machine, so the speaker search usually finds nothing there. Play on Sonos from the Windows build instead.
+- **Speakers and TVs:** the container's own network cannot see your devices.
+  - On a Linux host, add `--network host`, so the device search and the devices' song requests reach the player.
+  - Docker Desktop (Windows and macOS) runs containers in a virtual machine, so the device search usually finds nothing there. Play on them from the Windows build instead.
 - **AI control (MCP):** give the container a name with `--name mp3blaster`. Then use `docker exec -i mp3blaster mp3blaster-rs --mcp` as the MCP server command. For Claude Desktop, that is `"command": "docker", "args": ["exec", "-i", "mp3blaster", "mp3blaster-rs", "--mcp"]`.
 
 ## Usage
@@ -104,7 +104,7 @@ mp3blaster-rs [OPTIONS] [PATHS]...
   --config <FILE>          use another config file
   --no-resume              do not resume the previous session's track
   --list-devices           list audio outputs and exit
-  --list-speakers          list Sonos speakers on the network and exit
+  --list-speakers          list Sonos speakers and Cast devices on the network and exit
   --write-default-config   write a commented config.toml and exit
   --headless               no TUI: line commands on stdin (p, s, n, f, b, +, -, q)
   --mcp                    MCP server on stdin/stdout for AI assistants (see AI control)
@@ -134,7 +134,7 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 | Volume down / up | `<` / `>` | `-` / `+` (also `=`) |
 | Help / message log | `?` / `L` | |
 | Colour theme picker | | `t` |
-| Play on: this computer or a Sonos speaker | | `o` |
+| Play on: this computer, a Sonos speaker or a TV (Google Cast) | | `o` |
 | Fullscreen spectrum / spectrum layout | | `f` / `w` |
 | Visualiser: bars / Matrix rain / defragmenter / HYPERSPACE | | `v` |
 | Quit | `q` | Ctrl+c |
@@ -171,7 +171,7 @@ Run `mp3blaster-rs --write-default-config` to get a commented file, or see [`con
 - Every setting is optional, and an invalid value falls back to its default with a warning.
 - `[keybindings]` changes keys everywhere; `[keybindings.file_manager]` changes them only inside the file manager.
 - A binding replaces that action's default keys.
-- `[sonos]` is described under *Sonos speakers*, and `[mcp]` under *AI control (MCP)*.
+- `[outputs]` is described under *Speakers and TVs*, and `[mcp]` under *AI control (MCP)*.
 
 ```toml
 [general]
@@ -193,33 +193,47 @@ play_pause = ["Space", "c"]
 next_track = ["n", "6"]
 ```
 
-## Sonos speakers
+## Speakers and TVs (Sonos, Google Cast)
 
-Press `o` to choose where the music plays: **This computer**, or any Sonos speaker or group found on your network. Pick one with Enter and the music moves there, from the same spot. Pick **This computer** to bring it back.
+Press `o` to choose where the music plays: **This computer**, or a device found on your network:
+- **Sonos** speakers and groups;
+- **Google Cast** devices: Android and Google TVs, Chromecasts, Nest speakers and speaker groups.
 
-- **Everything keeps working.** Play, pause, seek, next and previous, the queue and the play modes all control the speaker. The volume keys set the speaker's (group) volume.
-- **Visualizers stay in time.** The computer keeps playing the song silently, which drives the visualizers and the progress bar, and it is kept within a fraction of a second of the speaker.
-- **The Sonos app still works.** Pausing, playing, stopping or changing the volume there (or on the speaker) is followed by the player. If the speaker is switched to something else, such as Spotify, the player stops following it and pauses.
-- **Any file plays.** If a speaker cannot play a file (hi-res FLAC above 48 kHz, which no Sonos speaker plays, or a format an older model lacks), the player sends it as WAV instead, converted on the fly.
-- **Between songs there is a short pause**, because a Sonos speaker loads each song separately. Gapless albums are therefore not gapless on the speaker.
-- **Now Playing** shows the speaker, and the message log (`L`) records what the speaker is sent.
+Pick one with Enter and the music moves there, from the same spot. Pick **This computer** to bring it back.
 
-**How it works.** The player finds speakers with the same network search the Sonos app uses (SSDP) and controls them over UPnP. The speaker fetches each song from a small web server in the player.
+- **Everything keeps working.** Play, pause, seek, next and previous, the queue and the play modes all control the device. The volume keys set the device's volume (a Sonos group's, or the TV's).
+- **Visualizers stay in time.** The computer keeps playing the song silently, which drives the visualizers and the progress bar, and it is kept within a fraction of a second of the device.
+- **The device's own controls still work.** Pausing, playing, stopping or changing the volume in the Sonos app, on the speaker or with the TV's remote is followed by the player.
+  - If the device switches to something else (Spotify on the Sonos, Netflix on the TV), the player stops following it and pauses.
+- **The TV shows the song:** title, artist, album and cover art. The art comes from the file's tags, or from a `cover.jpg` or `folder.jpg` next to it. The Sonos app shows the same.
+- **Any file plays.** If a device cannot play a file, the player sends it as WAV instead, converted on the fly. Examples are hi-res FLAC above 48 kHz, which no Sonos speaker plays, and formats an older model lacks.
+- **Between songs there is a short pause**, because the device loads each song separately. Gapless albums are therefore not gapless there.
+- **Now Playing** shows the device, and the message log (`L`) records what it is sent.
 
-**Firewall.** That web server must be reachable from the speaker. The first time you press `o`, Windows asks whether mp3blaster-rs may communicate on networks. Allow it for **private networks**. If it was blocked, the player says so ("cannot fetch songs from this computer"). You can then allow it in *Windows Security → Firewall & network protection → Allow an app through firewall*.
+**Casting to a TV** starts the TV's own media player (Google's Default Media Receiver), like casting from a phone does. It replaces whatever the TV shows, and it closes again when you switch back to this computer.
+
+**How it works:**
+- **Finding devices:** the player uses the same network searches as the Sonos and Google Home apps (SSDP and mDNS).
+- **Control:** Sonos speakers over UPnP, Cast devices over the Cast protocol, which is encrypted (TLS).
+- **Songs:** the device fetches each song from a small web server in the player.
+
+**Firewall.** That web server must be reachable from the device. The first time you press `o`, Windows asks whether mp3blaster-rs may communicate on networks. Allow it for **private networks**. If it was blocked, the player says so ("cannot fetch songs from this computer"). You can then allow it in *Windows Security → Firewall & network protection → Allow an app through firewall*.
 
 ```toml
-[sonos]
-http_port = 0                  # port speakers fetch songs from; 0 = any free port (set one for a firewall rule)
-hosts = ["192.168.1.20"]       # speakers the network search cannot find, e.g. on another subnet
+[outputs]
+http_port = 0                    # port devices fetch songs from; 0 = any free port (set one for a firewall rule)
+sonos_hosts = ["192.168.1.20"]   # Sonos speakers the network search cannot find, e.g. on another subnet
 ```
 
-**If no speakers are found:**
-- Check that the computer is on the same network as the speakers. Guest Wi-Fi often keeps devices apart.
+**If a device is not found:**
+- Check that the computer is on the same network as the device. Guest Wi-Fi often keeps devices apart.
 - Run `mp3blaster-rs --list-speakers` to see what the search finds.
-- If the speakers are on another subnet, list one of them under `hosts`. One speaker is enough, since it reports the rest of the household.
+- For Sonos speakers on another subnet, list one of them under `sonos_hosts`. One speaker is enough, since it reports the rest of the household.
+- A TV in standby may not answer. Turn it on, or look in its settings for an option that keeps casting available in standby (often called network standby or remote start).
 
-**Security.** The web server serves only the songs being played, at addresses that contain a random 128-bit key. It does not list folders or serve anything else.
+**Security:**
+- **The web server** serves only the songs being played (and their cover art), at addresses that contain a random 128-bit key. It does not list folders or serve anything else.
+- **Connections to Cast devices** are encrypted. The device's self-signed certificate is accepted without checking, as is usual for Cast software outside Google's own apps.
 
 ## AI control (MCP)
 
@@ -228,7 +242,7 @@ AI assistants that speak the [Model Context Protocol](https://modelcontextprotoc
 - "Queue a few songs from the 80s."
 - "What's playing?"
 - "Show HYPERSPACE fullscreen."
-- "Play this in the living room."
+- "Play this in the living room." / "Put the music on the TV."
 
 **How it works.** `mp3blaster-rs --mcp` is the MCP server the assistant starts. It speaks MCP over stdin/stdout and forwards each tool call to the player running in your terminal, which carries it out and shows a banner such as "Claude Code: queued 5 tracks". Start the player yourself as usual. If it isn't running, the assistant is told so.
 
@@ -270,7 +284,7 @@ claude mcp add mp3blaster -- "C:\path\to\mp3blaster-rs.exe" --mcp
 | `playback`, `seek`, `set_volume` | Play, pause, toggle, stop, next and previous; seeking; volume. |
 | `set_visualizer` | Sets the style (bars, matrix, defrag, hyperspace), fullscreen, and the spectrum layout. |
 | `set_play_options`, `set_theme` | Play mode and repeat; the colour theme for this session. |
-| `list_speakers`, `set_output` | List this computer and the Sonos speakers; move playback to one (by speaker, group or room name) or back. |
+| `list_outputs`, `set_output` | List this computer, the Sonos speakers and the Cast devices; move playback to one (by name, or a Sonos room) or back. |
 
 **Search covers the playlist and your music folder.** On the first request, the player indexes the music folder in the background and caches the tags in `library.json` in its state folder. Later starts re-read only the files that changed. A song found only in the folder is added to a "Requests" group in the playlist when it is queued. Every action an assistant takes is also written to the message log (`L`).
 
@@ -310,9 +324,9 @@ library_dirs = ["D:/Music", "E:/Archive"]   # folders to search; empty = the mus
 - **Themes:** the default is Dracula instead of `classic_blue`. The spec's four themes are kept, five VS Code themes are added, and there is an in-app picker (`t`).
 - **Additions:**
   - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `v`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, `o`, and the play queue (`e`/Ins, `u`, `X`);
-  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, and the `[mcp]` and `[sonos]` sections;
+  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, and the `[mcp]` and `[outputs]` sections;
   - AI control through MCP (`--mcp`), with a play queue and music folder search;
-  - playing on Sonos speakers (`o`, `--list-speakers`);
+  - playing on Sonos speakers and Google Cast devices (`o`, `--list-speakers`);
   - the `[keybindings.file_manager]` section.
 - **Key conflict:** the spec's UI mockup shows F1 as Help, but its key table says F1 opens the file manager. The key table wins, so Help is `?`.
 
@@ -326,10 +340,11 @@ tests/fixtures/generate.ps1                  # regenerate audio fixtures (needs 
 
 None of the tests need a sound card, and none use your network.
 
-- **Sonos tests:** they talk to a pretend speaker on localhost (`src/sonos/fake.rs`).
-  - The fake answers UPnP calls the way a real speaker does and fetches the songs it is given.
+- **Speaker and TV tests:** they talk to a pretend Sonos speaker and a pretend Cast device on localhost (`src/outputs/sonos/fake.rs`, `src/outputs/cast/fake.rs`; the Cast one speaks TLS).
+  - The fakes answer the way real devices do and fetch the songs they are given.
   - It can also be told to refuse a file type, fail a command, or act as if blocked by a firewall.
   - To check the real network, run `mp3blaster-rs --list-speakers`. It only searches and plays nothing.
+  - To check a real Cast device without changing anything on it: `CAST_DEVICE=<ip>:8009 cargo test --lib real_cast_device -- --ignored --nocapture`.
 
 The terminal backend (`src/ui/backend.rs`) sends only the colours that changed, and each frame is written to the console in a single call. A test replays its output through a terminal emulator (`vt100`) and checks that every cell matches. To measure how much a visualiser sends to the terminal: `cargo test --release --lib hyperspace_terminal_load -- --ignored --nocapture`. The audio pipeline is tested by pulling samples from the renderer exactly as the device callback would. This proves, for example, that a split FLAC file plays back gaplessly and sample-identical to the original.
 

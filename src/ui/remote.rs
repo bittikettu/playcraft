@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 use crate::audio::AudioCommand;
 use crate::library::index::IndexState;
 use crate::model::{Group, PlayMode, PlaybackStatus, RepeatMode, TrackMetadata};
+use crate::outputs::Device;
 use crate::remote::RemoteCall;
 
 use super::app::{App, BannerLevel, SpectrumLayout, View, Visualizer};
@@ -115,7 +116,7 @@ struct SeekArgs {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-struct SpeakersArgs {
+struct OutputsArgs {
     refresh: bool,
 }
 
@@ -239,6 +240,15 @@ fn status_name(s: PlaybackStatus) -> &'static str {
 }
 
 /// A track as tools report it; untagged fields are left out.
+/// A network device: name, kind and rooms.
+fn device_json(device: &Device) -> Value {
+    let kind = match device {
+        Device::Sonos(_) => "sonos",
+        Device::Cast(_) => "google_cast",
+    };
+    json!({ "name": device.name(), "kind": kind, "rooms": device.rooms() })
+}
+
 fn track_json(path: &Path, meta: Option<&TrackMetadata>) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert("path".into(), crate::paths::display(path).into());
@@ -359,10 +369,10 @@ impl App {
         let calls: Vec<RemoteCall> = calls.try_iter().collect();
         let any = !calls.is_empty();
         for call in calls {
-            if self.needs_speaker_search(&call) {
+            if self.needs_device_search(&call) {
                 // Answered when the search is done (it takes a second or two).
-                self.search_speakers();
-                self.waiting_for_speakers.push(call);
+                self.search_devices();
+                self.waiting_for_devices.push(call);
             } else {
                 self.answer_call(call);
             }
@@ -370,19 +380,19 @@ impl App {
         any
     }
 
-    /// Whether `call` should wait for a speaker search first.
-    fn needs_speaker_search(&self, call: &RemoteCall) -> bool {
-        if self.speakers.searching.is_some() {
-            return matches!(call.tool.as_str(), "list_speakers" | "set_output");
+    /// Whether `call` should wait for a device search first.
+    fn needs_device_search(&self, call: &RemoteCall) -> bool {
+        if self.devices.searching.is_some() {
+            return matches!(call.tool.as_str(), "list_outputs" | "set_output");
         }
         match call.tool.as_str() {
-            "list_speakers" => {
-                !self.speakers.searched || call.args.get("refresh") == Some(&Value::Bool(true))
+            "list_outputs" => {
+                !self.devices.searched || call.args.get("refresh") == Some(&Value::Bool(true))
             }
             "set_output" => {
                 let name = call.args.get("name").and_then(Value::as_str).unwrap_or("");
                 let local = LOCAL_NAMES.contains(&name.trim().to_lowercase().as_str());
-                !local && !self.speakers.searched
+                !local && !self.devices.searched
             }
             _ => false,
         }
@@ -422,9 +432,9 @@ impl App {
             "set_visualizer" => Ok(self.visualizer_remote(client, &parse(args)?)),
             "set_play_options" => Ok(self.play_options_remote(client, &parse(args)?)),
             "set_theme" => self.theme_remote(client, &parse(args)?),
-            "list_speakers" => {
-                let _: SpeakersArgs = parse(args)?;
-                Ok(self.speakers_json())
+            "list_outputs" => {
+                let _: OutputsArgs = parse(args)?;
+                Ok(self.outputs_json())
             }
             "set_output" => self.output_remote(client, &parse(args)?),
             other => Err(format!("unknown tool \"{other}\"")),
@@ -899,45 +909,39 @@ impl App {
         json!({ "play_mode": mode_name(self.play_mode), "repeat": repeat_name(self.repeat) })
     }
 
-    /// Where the player plays, for `get_status` and `list_speakers`.
+    /// Where the player plays, for `get_status` and `list_outputs`.
     fn output_json(&self) -> Value {
         match &self.cast {
             None => json!({ "name": "this computer", "kind": "computer" }),
             Some(cast) => {
-                let mut out = json!({
-                    "name": cast.zone.name(),
-                    "kind": "sonos",
-                    "rooms": cast.zone.rooms,
-                });
+                let mut out = device_json(&cast.device);
                 if let Some(state) = cast.state() {
-                    out["speaker_state"] = state.label().into();
+                    out["device_state"] = state.label().into();
                 }
                 out
             }
         }
     }
 
-    fn speakers_json(&self) -> Value {
-        let active = self.cast.as_ref().map(|c| c.zone.uuid.as_str());
+    fn outputs_json(&self) -> Value {
+        let active = self.cast.as_ref().map(|c| c.device.id());
         let mut outputs = vec![json!({
             "name": "this computer",
             "kind": "computer",
             "active": active.is_none(),
         })];
-        outputs.extend(self.speakers.zones.iter().map(|z| {
-            json!({
-                "name": z.name(),
-                "kind": "sonos",
-                "rooms": z.rooms,
-                "active": active == Some(z.uuid.as_str()),
-            })
+        outputs.extend(self.devices.list.iter().map(|d| {
+            let mut out = device_json(d);
+            out["active"] = (active == Some(d.id())).into();
+            out
         }));
         let mut result = json!({ "outputs": outputs, "playing_on": self.output_name() });
-        if let Some(e) = &self.speakers.error {
+        if let Some(e) = &self.devices.error {
             result["error"] = e.as_str().into();
-        } else if self.speakers.zones.is_empty() {
-            result["note"] = "No Sonos speakers were found on this network. Speakers on another \
-                              subnet can be listed in config.toml under [sonos] hosts."
+        } else if self.devices.list.is_empty() {
+            result["note"] = "No Sonos speakers or Google Cast devices were found on this \
+                              network. Sonos speakers on another subnet can be listed in \
+                              config.toml under [outputs] sonos_hosts."
                 .into();
         }
         result
@@ -955,31 +959,31 @@ impl App {
             );
             return Ok(self.output_json());
         }
-        let zones = &self.speakers.zones;
-        let found = zones
+        let devices = &self.devices.list;
+        let found = devices
             .iter()
-            .find(|z| z.name().to_lowercase() == wanted)
+            .find(|d| d.name().to_lowercase() == wanted)
             .or_else(|| {
-                zones
+                devices
                     .iter()
-                    .find(|z| z.rooms.iter().any(|r| r.to_lowercase() == wanted))
+                    .find(|d| d.rooms().iter().any(|r| r.to_lowercase() == wanted))
             })
             .or_else(|| {
-                zones
+                devices
                     .iter()
-                    .find(|z| z.name().to_lowercase().contains(&wanted))
+                    .find(|d| d.name().to_lowercase().contains(&wanted))
             })
             .cloned();
-        let Some(zone) = found else {
+        let Some(device) = found else {
             let mut names: Vec<String> = vec!["this computer".into()];
-            names.extend(zones.iter().map(|z| z.name()));
+            names.extend(devices.iter().map(|d| d.name()));
             return Err(format!(
-                "no speaker called \"{}\" (outputs: {})",
+                "no output called \"{}\" (outputs: {})",
                 args.name,
                 names.join(", ")
             ));
         };
-        self.start_cast(zone);
+        self.start_cast(device);
         match &self.cast {
             Some(_) => {
                 let text = format!("{client}: playing on {}", self.output_name());
@@ -1343,11 +1347,11 @@ mod tests {
     #[test]
     fn speakers_are_searched_for_listed_and_chosen() {
         let (mut app, _music) = setup();
-        let fake = crate::sonos::fake::FakeSonos::start("Kitchen");
-        app.sonos.hosts = vec![fake.addr.to_string()];
+        let fake = crate::outputs::sonos::fake::FakeSonos::start("Kitchen");
+        app.outputs.sonos_hosts = vec![fake.addr.to_string()];
 
         // The first call waits for the search.
-        let listed = call_over_socket(&mut app, "list_speakers", json!({})).unwrap();
+        let listed = call_over_socket(&mut app, "list_outputs", json!({})).unwrap();
         let names: Vec<&str> = listed["outputs"]
             .as_array()
             .unwrap()
@@ -1381,10 +1385,10 @@ mod tests {
     #[test]
     fn choosing_a_speaker_before_any_search_waits_for_one() {
         let (mut app, _music) = setup();
-        let fake = crate::sonos::fake::FakeSonos::start("Den");
-        app.sonos.hosts = vec![fake.addr.to_string()];
+        let fake = crate::outputs::sonos::fake::FakeSonos::start("Den");
+        app.outputs.sonos_hosts = vec![fake.addr.to_string()];
         let out = call_over_socket(&mut app, "set_output", json!({ "name": "Den" })).unwrap();
         assert_eq!(out["name"], "Den");
-        assert!(app.speakers.searched);
+        assert!(app.devices.searched);
     }
 }

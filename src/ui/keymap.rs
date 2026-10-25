@@ -219,7 +219,7 @@ impl Action {
             Action::MoveDown => "Move item down",
             Action::ShowLog => "Message log",
             Action::ThemeSelector => "Choose colour theme",
-            Action::OutputSelector => "Play on: this computer or a Sonos speaker",
+            Action::OutputSelector => "Play on: this computer, a Sonos speaker or a TV",
             Action::SpectrumFullscreen => "Fullscreen spectrum analyser",
             Action::SpectrumLayout => "Spectrum: wide / in panel / off",
             Action::VisualizerStyle => "Visualizer: bars / Matrix / defragmenter / HYPERSPACE",

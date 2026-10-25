@@ -1,140 +1,66 @@
-//! A background connection to one speaker group's coordinator. It carries out commands in
-//! order and reports the speaker's state twice a second, so the UI thread never waits on the
-//! network.
+//! Sonos speakers, found by SSDP (`discovery`) and controlled over UPnP (`control`). A
+//! group's coordinator is driven through a link that polls its state.
 
-use std::thread::JoinHandle;
+pub mod control;
+pub mod discovery;
+#[cfg(test)]
+pub(crate) mod fake;
+
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
-use super::control::{SonosError, Speaker, TransportState};
+use control::SonosError;
+pub use control::Speaker;
+pub use discovery::Zone;
+
+use super::http::xml_escape;
+use super::link::{Command, Event, Link, Reachability, SongInfo, Status, Timing, TransportState};
 
 /// Seeks shorter than this from the start of a track are not worth a command.
 const MIN_SEEK: Duration = Duration::from_secs(1);
+/// Sonos reports positions in whole seconds.
+const PRECISION: Duration = Duration::from_secs(1);
 
-/// How often the link asks the speaker what it is doing.
-#[derive(Debug, Clone, Copy)]
-pub struct Timing {
-    pub poll_playing: Duration,
-    pub poll_idle: Duration,
-    /// After a command, the next report comes this soon.
-    pub after_command: Duration,
-    pub volume_every: Duration,
-    /// No answers for this long make the speaker unreachable.
-    pub unreachable_after: Duration,
+/// DIDL-Lite metadata for `url`, a `mime` file.
+pub fn didl(url: &str, mime: &str, song: &SongInfo) -> String {
+    let duration = song
+        .duration
+        .map(|d| format!(" duration=\"{}\"", control::format_time(d)))
+        .unwrap_or_default();
+    let mut item = format!(
+        "<res protocolInfo=\"http-get:*:{mime}:*\"{duration}>{}</res>\
+         <dc:title>{}</dc:title>\
+         <upnp:class>object.item.audioItem.musicTrack</upnp:class>",
+        xml_escape(url),
+        xml_escape(&song.title),
+    );
+    if let Some(artist) = &song.artist {
+        item.push_str(&format!("<dc:creator>{}</dc:creator>", xml_escape(artist)));
+    }
+    if let Some(album) = &song.album {
+        item.push_str(&format!("<upnp:album>{}</upnp:album>", xml_escape(album)));
+    }
+    if let Some(art) = &song.art {
+        item.push_str(&format!(
+            "<upnp:albumArtURI>{}</upnp:albumArtURI>",
+            xml_escape(art)
+        ));
+    }
+    format!(
+        "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
+         xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" \
+         xmlns:r=\"urn:schemas-rinconnetworks-com:metadata-1-0/\" \
+         xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\">\
+         <item id=\"-1\" parentID=\"-1\" restricted=\"true\">{item}</item></DIDL-Lite>"
+    )
 }
 
-impl Default for Timing {
-    fn default() -> Self {
-        Timing {
-            poll_playing: Duration::from_millis(500),
-            poll_idle: Duration::from_secs(1),
-            after_command: Duration::from_millis(150),
-            volume_every: Duration::from_secs(2),
-            unreachable_after: Duration::from_secs(6),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Command {
-    /// Loads `url` (described by DIDL-Lite `metadata`) and goes to `start`; plays it when
-    /// `play` is set.
-    Load {
-        url: String,
-        metadata: String,
-        start: Duration,
-        play: bool,
-    },
-    Play,
-    Pause,
-    Stop,
-    Seek(Duration),
-    /// Group volume, 0–100.
-    SetVolume(u8),
-}
-
-/// What the speaker is doing.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Status {
-    pub state: TransportState,
-    pub track_uri: String,
-    /// Whole seconds into the track.
-    pub position: Option<Duration>,
-    pub duration: Option<Duration>,
-    pub volume: Option<u8>,
-    /// The position was read between these two moments.
-    pub asked: Instant,
-    pub answered: Instant,
-    /// How many commands had been carried out when the status was read.
-    pub done: u64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Event {
-    Status(Status),
-    /// A command failed: a message for the user, the UPnP error code if the speaker gave
-    /// one, and whether it was a `Load`.
-    Failed {
-        message: String,
-        code: Option<u32>,
-        load: bool,
-    },
-    /// The speaker stopped answering.
-    Unreachable(String),
-}
-
-pub struct Link {
-    commands: Option<Sender<Command>>,
-    events: Receiver<Event>,
-    sent: u64,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Link {
-    pub fn start(speaker: Speaker, timing: Timing) -> Link {
-        let (commands, received) = unbounded();
-        let (events_tx, events) = unbounded();
-        let thread = std::thread::Builder::new()
-            .name("sonos-link".into())
-            .spawn(move || run(speaker, timing, &received, &events_tx))
-            .ok();
-        Link {
-            commands: Some(commands),
-            events,
-            sent: 0,
-            thread,
-        }
-    }
-
-    /// Queues a command. Returns how many have been sent, this one included.
-    pub fn send(&mut self, command: Command) -> u64 {
-        if let Some(commands) = &self.commands {
-            let _ = commands.send(command);
-        }
-        self.sent += 1;
-        self.sent
-    }
-
-    pub fn sent(&self) -> u64 {
-        self.sent
-    }
-
-    pub fn events(&self) -> &Receiver<Event> {
-        &self.events
-    }
-
-    /// Lets the queued commands finish, waiting at most `wait` for them, and ends the link.
-    pub fn close(mut self, wait: Duration) {
-        self.commands = None;
-        let Some(thread) = self.thread.take() else {
-            return;
-        };
-        let deadline = Instant::now() + wait;
-        while !thread.is_finished() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
+/// Connects to the group led by `speaker`.
+pub fn start(speaker: Speaker, timing: Timing) -> Link {
+    Link::spawn("sonos-link", move |commands, events| {
+        run(speaker, timing, &commands, &events)
+    })
 }
 
 /// Carries out one command. `pending_seek` holds a seek the speaker refused because it had
@@ -152,12 +78,13 @@ fn execute(
     match command {
         Command::Load {
             url,
-            metadata,
+            mime,
+            song,
             start,
             play,
         } => {
             *pending_seek = (start >= MIN_SEEK).then_some(start);
-            speaker.set_uri(&url, &metadata)?;
+            speaker.set_uri(&url, &didl(&url, &mime, &song))?;
             if play {
                 speaker.play()?;
             }
@@ -199,8 +126,7 @@ fn run(speaker: Speaker, timing: Timing, commands: &Receiver<Command>, events: &
     let mut next_volume = Instant::now();
     let mut volume = None;
     let mut pending_seek = None;
-    let mut failing_since: Option<Instant> = None;
-    let mut unreachable = false;
+    let mut reachability = Reachability::default();
     loop {
         match commands.recv_timeout(next_poll.saturating_duration_since(Instant::now())) {
             Ok(command) => {
@@ -234,8 +160,7 @@ fn run(speaker: Speaker, timing: Timing, commands: &Receiver<Command>, events: &
         let mut playing = false;
         match read {
             Ok((state, position, asked, answered)) => {
-                failing_since = None;
-                unreachable = false;
+                reachability.answered();
                 playing = state == TransportState::Playing;
                 if Instant::now() >= next_volume {
                     volume = speaker.group_volume().ok().or(volume);
@@ -253,20 +178,19 @@ fn run(speaker: Speaker, timing: Timing, commands: &Receiver<Command>, events: &
                     state,
                     track_uri: position.track_uri,
                     position: position.position,
+                    precision: PRECISION,
                     duration: position.duration,
                     volume,
                     asked,
                     answered,
                     done,
                 };
-                if events.send(Event::Status(status)).is_err() {
-                    return;
-                }
+                // Nobody may be listening any more: the link is closing, and the commands
+                // still queued (a last Stop) are carried out before the worker ends.
+                let _ = events.send(Event::Status(status));
             }
             Err(e) => {
-                let since = *failing_since.get_or_insert_with(Instant::now);
-                if !unreachable && since.elapsed() >= timing.unreachable_after {
-                    unreachable = true;
+                if reachability.failed(timing.unreachable_after) {
                     log::warn!("Sonos {} does not answer: {e}", speaker.addr);
                     let _ = events.send(Event::Unreachable(e.to_string()));
                 }
@@ -284,28 +208,46 @@ fn run(speaker: Speaker, timing: Timing, commands: &Receiver<Command>, events: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sonos::fake::FakeSonos;
+    use crate::outputs::link::tests::{next_failure, next_status, quick};
+    use fake::FakeSonos;
 
-    fn quick() -> Timing {
-        Timing {
-            poll_playing: Duration::from_millis(20),
-            poll_idle: Duration::from_millis(20),
-            after_command: Duration::from_millis(5),
-            volume_every: Duration::from_millis(20),
-            unreachable_after: Duration::from_millis(200),
+    fn load(url: &str, start: u64, play: bool) -> Command {
+        Command::Load {
+            url: url.into(),
+            mime: "audio/flac".into(),
+            song: SongInfo::default(),
+            start: Duration::from_secs(start),
+            play,
         }
     }
 
-    fn next_status(link: &Link, check: impl Fn(&Status) -> bool) -> Status {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            match link.events().recv_timeout(left) {
-                Ok(Event::Status(s)) if check(&s) => return s,
-                Ok(_) => {}
-                Err(_) => panic!("no matching status"),
-            }
-        }
+    #[test]
+    fn describes_songs_in_didl_lite() {
+        let song = SongInfo {
+            title: "Rock & Roll".into(),
+            artist: Some("Led Zeppelin".into()),
+            album: None,
+            duration: Some(Duration::from_secs(220)),
+            art: Some("http://10.0.0.2:5000/s/2.jpg".into()),
+        };
+        let xml = didl("http://10.0.0.2:5000/s/1.flac", "audio/flac", &song);
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let text = |name: &str| {
+            doc.descendants()
+                .find(|n| n.tag_name().name() == name)
+                .and_then(|n| n.text())
+        };
+        assert_eq!(text("title"), Some("Rock & Roll"));
+        assert_eq!(text("creator"), Some("Led Zeppelin"));
+        assert_eq!(text("album"), None);
+        assert_eq!(text("albumArtURI"), Some("http://10.0.0.2:5000/s/2.jpg"));
+        let res = doc.descendants().find(|n| n.has_tag_name("res")).unwrap();
+        assert_eq!(res.text(), Some("http://10.0.0.2:5000/s/1.flac"));
+        assert_eq!(
+            res.attribute("protocolInfo"),
+            Some("http-get:*:audio/flac:*")
+        );
+        assert_eq!(res.attribute("duration"), Some("0:03:40"));
     }
 
     #[test]
@@ -336,43 +278,28 @@ mod tests {
     #[test]
     fn carries_out_commands_in_order_and_reports() {
         let fake = FakeSonos::start("Kitchen");
-        let mut link = Link::start(Speaker::new(fake.addr), quick());
-        link.send(Command::Load {
-            url: "x-test:2.flac".into(),
-            metadata: String::new(),
-            start: Duration::from_secs(42),
-            play: true,
-        });
+        let mut link = start(Speaker::new(fake.addr), quick());
+        link.send(load("x-test:2.flac", 42, true));
         let sent = link.send(Command::SetVolume(40));
         let s = next_status(&link, |s| s.done == sent);
         assert_eq!(s.state, TransportState::Playing);
         assert_eq!(s.track_uri, "x-test:2.flac");
         assert_eq!(s.position, Some(Duration::from_secs(42)));
+        assert_eq!(s.precision, PRECISION);
         assert_eq!(s.volume, Some(40));
         assert!(s.asked <= s.answered);
         assert_eq!(
             fake.state().actions[..4],
             ["SetAVTransportURI", "Play", "Seek", "SetGroupVolume"]
         );
+        assert!(fake.state().metadata.contains("audio/flac"));
 
         // A failed command is reported, and the link goes on.
         fake.state().fail.insert("Pause".into(), 402);
         let sent = link.send(Command::Pause);
-        loop {
-            match link.events().recv_timeout(Duration::from_secs(5)).unwrap() {
-                Event::Failed {
-                    message,
-                    code,
-                    load,
-                } => {
-                    assert!(message.contains("Pause"), "{message}");
-                    assert_eq!((code, load), (Some(402), false));
-                    break;
-                }
-                Event::Status(_) => {}
-                other => panic!("{other:?}"),
-            }
-        }
+        let (message, code, load) = next_failure(&link);
+        assert!(message.contains("Pause"), "{message}");
+        assert_eq!((code, load), (Some(402), false));
         next_status(&link, |s| s.done == sent);
 
         // Closing lets queued commands finish.
@@ -382,16 +309,28 @@ mod tests {
     }
 
     #[test]
+    fn closing_while_polling_still_stops_the_speaker() {
+        for _ in 0..20 {
+            let fake = FakeSonos::start("Kitchen");
+            let mut link = start(Speaker::new(fake.addr), quick());
+            let sent = link.send(load("x-test:5.flac", 0, true));
+            next_status(&link, |s| s.done == sent);
+            link.send(Command::Stop);
+            link.close(Duration::ZERO);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while fake.state().transport != "STOPPED" {
+                assert!(Instant::now() < deadline, "{:?}", fake.state().actions);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+
+    #[test]
     fn a_refused_seek_waits_for_the_track_to_start() {
         let fake = FakeSonos::start("Kitchen");
         fake.state().fail.insert("Seek".into(), 701);
-        let mut link = Link::start(Speaker::new(fake.addr), quick());
-        let sent = link.send(Command::Load {
-            url: "x-test:3.ogg".into(),
-            metadata: String::new(),
-            start: Duration::from_secs(90),
-            play: false,
-        });
+        let mut link = start(Speaker::new(fake.addr), quick());
+        let sent = link.send(load("x-test:3.ogg", 90, false));
         let s = next_status(&link, |s| s.done == sent);
         assert_eq!(s.position, Some(Duration::ZERO));
         fake.state().fail.clear();
@@ -403,12 +342,12 @@ mod tests {
 
     #[test]
     fn reports_a_speaker_that_does_not_answer() {
-        // Nothing listens on the fake's port once it is taken and dropped.
+        // Nothing listens on a port that was taken and given back.
         let addr = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
             .unwrap();
-        let link = Link::start(Speaker::new(addr), quick());
+        let link = start(Speaker::new(addr), quick());
         match link.events().recv_timeout(Duration::from_secs(10)).unwrap() {
             Event::Unreachable(_) => {}
             other => panic!("{other:?}"),

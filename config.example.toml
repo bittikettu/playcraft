@@ -37,11 +37,12 @@ enabled = true
 # Folders searched for songs besides the playlist (empty = the music folder)
 library_dirs = []
 
-[sonos]
-# Port Sonos speakers fetch songs from (0 = any free port); set one for a firewall rule
+[outputs]
+# Port Sonos speakers and Cast devices fetch songs from (0 = any free port);
+# set one for a firewall rule
 http_port = 0
-# Speakers the network search cannot find (another subnet), e.g. ["192.168.1.20"]
-hosts = []
+# Sonos speakers the network search cannot find (another subnet), e.g. ["192.168.1.20"]
+sonos_hosts = []
 
 [keybindings]
 # Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,

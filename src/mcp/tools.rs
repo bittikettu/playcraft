@@ -267,11 +267,12 @@ track, group or all.",
         },
     },
     Tool {
-        name: "list_speakers",
-        title: "Speakers",
-        description: "Where the player can play: this computer and the Sonos speakers (rooms \
-and groups) found on the network, with the one playing marked active. The first call, or one \
-with refresh, searches the network, which takes a couple of seconds.",
+        name: "list_outputs",
+        title: "Speakers and TVs",
+        description: "Where the player can play: this computer, Sonos speakers (rooms and \
+groups) and Google Cast devices (Android TVs, Chromecasts, Nest speakers) found on the \
+network, with the one playing marked active. The first call, or one with refresh, searches the \
+network, which takes a couple of seconds.",
         read_only: true,
         destructive: false,
         schema: || {
@@ -286,17 +287,17 @@ with refresh, searches the network, which takes a couple of seconds.",
     },
     Tool {
         name: "set_output",
-        title: "Play on a speaker",
-        description: "Moves playback to a Sonos speaker or group by name (as list_speakers shows \
-it, or one of its rooms), or back to \"this computer\". The music continues where it is; \
-volume then controls the speaker.",
+        title: "Play on a speaker or TV",
+        description: "Moves playback to a Sonos speaker or group, or a Google Cast device, by \
+name (as list_outputs shows it, or a Sonos room), or back to \"this computer\". The music \
+continues where it is; volume then controls that device.",
         read_only: false,
         destructive: false,
         schema: || {
             json!({
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "A speaker, group or room name, or \"this computer\"." },
+                    "name": { "type": "string", "description": "A speaker, group, room or TV name, or \"this computer\"." },
                 },
                 "required": ["name"],
                 "additionalProperties": false,

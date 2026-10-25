@@ -1,12 +1,13 @@
-//! Keeping the local playback, which is muted while a speaker plays but still drives the
-//! visualizers, the progress bar and the play order, in step with the speaker.
+//! Keeping the local playback, which is muted while a device plays but still drives the
+//! visualizers, the progress bar and the play order, in step with the device.
 //!
-//! A speaker reports its position in whole seconds. A report of `r` means the speaker was
-//! somewhere in `[r, r + 1)` at a moment between asking and answering, which bounds the
-//! offset between the speaker and the local position. Both clocks run at the same rate, so
-//! the bounds of successive reports intersect and pin the offset down to a fraction of a
-//! second within a few reports. Bounds that no longer meet mean the speaker jumped (a seek,
-//! a stall), and the estimate starts over.
+//! A device reports its position at some moment between asking and answering, rounded down
+//! to its precision: Sonos reports whole seconds, so a report of `r` means somewhere in
+//! `[r, r + 1)`; Cast reports exact times. That bounds the offset between the device and the
+//! local position. Both clocks run at the same rate, so the bounds of successive reports
+//! intersect and pin the offset down to a fraction of a second within a few reports. Bounds
+//! that no longer meet mean the device jumped (a seek, a stall), and the estimate starts
+//! over.
 
 /// The local playback trails the speaker by this much (seconds), so a track always ends on
 /// the speaker before the local playback moves on to the next one.
@@ -23,11 +24,19 @@ pub struct Offset {
 }
 
 impl Offset {
-    /// Adds a report: the speaker said `reported` whole seconds, asked `asked_ago` and
-    /// answered `answered_ago` seconds ago; the local position is `local` seconds now.
-    pub fn observe(&mut self, reported: f64, asked_ago: f64, answered_ago: f64, local: f64) {
+    /// Adds a report: the device said `reported` seconds (rounded down to `precision`),
+    /// asked `asked_ago` and answered `answered_ago` seconds ago; the local position is
+    /// `local` seconds now.
+    pub fn observe(
+        &mut self,
+        reported: f64,
+        precision: f64,
+        asked_ago: f64,
+        answered_ago: f64,
+        local: f64,
+    ) {
         let lo = reported + answered_ago - local - SLACK;
-        let hi = reported + 1.0 + asked_ago - local + SLACK;
+        let hi = reported + precision + asked_ago - local + SLACK;
         self.bounds = match self.bounds {
             Some((a, b)) if a.max(lo) <= b.min(hi) => Some((a.max(lo), b.min(hi))),
             _ => Some((lo, hi)),
@@ -66,7 +75,7 @@ mod tests {
             local += 0.53;
             // Asked at local - 0.02, answered at local, the speaker read in between.
             let speaker_at_read = local - 0.01 + true_offset;
-            offset.observe(speaker_at_read.floor(), 0.02, 0.0, local);
+            offset.observe(speaker_at_read.floor(), 1.0, 0.02, 0.0, local);
         }
         offset
     }
@@ -100,10 +109,22 @@ mod tests {
     }
 
     #[test]
+    fn exact_reports_need_only_one() {
+        // Cast: 30.40 s read within a 20 ms round trip, local at 30.0.
+        let mut offset = Offset::default();
+        offset.observe(30.4, 0.0, 0.02, 0.0, 30.0);
+        let (estimate, uncertainty) = offset.estimate().unwrap();
+        assert!((estimate - 0.41).abs() < 0.02, "{estimate}");
+        assert!(uncertainty < 0.07, "{uncertainty}");
+        let c = offset.correction().unwrap();
+        assert!((c - (0.41 - LAG)).abs() < 0.02, "{c}");
+    }
+
+    #[test]
     fn a_jump_starts_over() {
         let mut offset = simulate(0.2, 10);
         // The speaker was seeked 30 s ahead.
-        offset.observe(45.0, 0.02, 0.0, 15.2);
+        offset.observe(45.0, 1.0, 0.02, 0.0, 15.2);
         let (estimate, _) = offset.estimate().unwrap();
         assert!(estimate > 29.0, "{estimate}");
     }

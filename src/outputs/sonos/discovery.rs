@@ -2,13 +2,11 @@
 //! config), then the household's rooms and groups from one speaker's ZoneGroupTopology.
 
 use std::collections::HashSet;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
-use std::time::{Duration, Instant};
-
-use socket2::{Domain, Protocol, Socket, Type};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
+use std::time::Duration;
 
 use super::control::Speaker;
+use crate::outputs::multicast_search;
 
 /// Sonos speakers take UPnP control requests on this port.
 pub const CONTROL_PORT: u16 = 1400;
@@ -18,8 +16,6 @@ const SEARCH: &str = "M-SEARCH * HTTP/1.1\r\n\
                       MAN: \"ssdp:discover\"\r\n\
                       MX: 1\r\n\
                       ST: urn:schemas-upnp-org:device:ZonePlayer:1\r\n\r\n";
-/// The search goes out twice, in case the first is lost (UDP on Wi-Fi).
-const RESEND_AFTER: Duration = Duration::from_millis(400);
 
 /// A group of rooms playing together; a single room is a group of one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,80 +85,18 @@ fn parse_ssdp_answer(text: &str) -> Option<SocketAddr> {
     location.filter(|_| sonos)
 }
 
-fn search_socket(interface: Option<Ipv4Addr>) -> io::Result<UdpSocket> {
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-    let ip = interface.unwrap_or(Ipv4Addr::UNSPECIFIED);
-    socket.bind(&SocketAddrV4::new(ip, 0).into())?;
-    if let Some(ip) = interface {
-        // Without this the search only leaves through the default adapter, which on a PC
-        // with virtual adapters (WSL, Hyper-V, VPNs) is often not the home network.
-        socket.set_multicast_if_v4(&ip)?;
-    }
-    socket.set_multicast_ttl_v4(4)?;
-    let socket: UdpSocket = socket.into();
-    socket.set_read_timeout(Some(Duration::from_millis(20)))?;
-    Ok(socket)
-}
-
-/// IPv4 addresses of this computer's network adapters (not loopback).
-fn adapter_addresses() -> Vec<Ipv4Addr> {
-    let mut ips: Vec<Ipv4Addr> = if_addrs::get_if_addrs()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|i| match i.addr {
-            if_addrs::IfAddr::V4(a) if !a.ip.is_loopback() => Some(a.ip),
-            _ => None,
-        })
-        .collect();
-    ips.sort();
-    ips.dedup();
-    ips
-}
-
 /// Sends an SSDP search for Sonos speakers and collects answers for `wait`.
 fn ssdp_search(wait: Duration) -> Vec<SocketAddr> {
-    let mut sockets: Vec<UdpSocket> = adapter_addresses()
-        .into_iter()
-        .filter_map(|ip| match search_socket(Some(ip)) {
-            Ok(s) => Some(s),
-            Err(e) => {
-                log::debug!("SSDP on {ip}: {e}");
-                None
-            }
-        })
-        .collect();
-    if sockets.is_empty() {
-        sockets.extend(search_socket(None).ok());
-    }
-    let send = |sockets: &[UdpSocket]| {
-        for s in sockets {
-            if let Err(e) = s.send_to(SEARCH.as_bytes(), SSDP_GROUP) {
-                log::debug!("SSDP search from {:?}: {e}", s.local_addr());
-            }
-        }
-    };
-    send(&sockets);
-    let started = Instant::now();
-    let mut resent = false;
     let mut found = Vec::new();
-    let mut buf = [0u8; 2048];
-    while started.elapsed() < wait {
-        if !resent && started.elapsed() >= RESEND_AFTER {
-            send(&sockets);
-            resent = true;
+    multicast_search(SSDP_GROUP, SEARCH.as_bytes(), 4, wait, |data, from| {
+        let text = String::from_utf8_lossy(data);
+        if let Some(addr) = parse_ssdp_answer(&text)
+            && !found.contains(&addr)
+        {
+            log::debug!("Sonos speaker at {addr} (answer from {from})");
+            found.push(addr);
         }
-        for s in &sockets {
-            while let Ok((n, from)) = s.recv_from(&mut buf) {
-                let text = String::from_utf8_lossy(&buf[..n]);
-                if let Some(addr) = parse_ssdp_answer(&text)
-                    && !found.contains(&addr)
-                {
-                    log::debug!("Sonos speaker at {addr} (answer from {from})");
-                    found.push(addr);
-                }
-            }
-        }
-    }
+    });
     found
 }
 
@@ -339,7 +273,7 @@ mod tests {
 #[cfg(test)]
 mod fake_tests {
     use super::*;
-    use crate::sonos::fake::FakeSonos;
+    use crate::outputs::sonos::fake::FakeSonos;
 
     #[test]
     fn asks_configured_speakers_about_their_groups() {

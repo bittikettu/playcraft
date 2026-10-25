@@ -213,9 +213,9 @@ pub(crate) mod tests {
         // Keep the renderer alive for the lifetime of the test.
         std::mem::forget(rx.recv().ok());
         let mut app = App::new(audio, root);
-        // Speakers in tests are fakes on localhost.
-        app.sonos.search_network = false;
-        app.sonos.bind = std::net::Ipv4Addr::LOCALHOST.into();
+        // Devices in tests are fakes on localhost.
+        app.outputs.search_network = false;
+        app.outputs.bind = std::net::Ipv4Addr::LOCALHOST.into();
         app
     }
 

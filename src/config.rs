@@ -100,15 +100,15 @@ impl Default for Mcp {
     }
 }
 
-/// `[sonos]`: playing on Sonos speakers (`o` picks the output).
+/// `[outputs]`: playing on Sonos speakers and Google Cast devices (`o` picks the output).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Sonos {
-    /// Port speakers fetch songs from; 0 picks a free one.
+pub struct Outputs {
+    /// Port devices fetch songs from; 0 picks a free one.
     pub http_port: u16,
-    /// Speaker addresses to ask besides those found on the network, for when the search
-    /// cannot reach them (another subnet, multicast blocked).
-    pub hosts: Vec<String>,
+    /// Sonos speaker addresses to ask besides those found on the network, for when the
+    /// search cannot reach them (another subnet, multicast blocked).
+    pub sonos_hosts: Vec<String>,
 }
 
 /// A key list in `[keybindings]`: `play_pause = ["Space", "c"]` or `stop = "s"`.
@@ -134,7 +134,7 @@ pub struct Config {
     pub audio: Audio,
     pub ui: Ui,
     pub mcp: Mcp,
-    pub sonos: Sonos,
+    pub outputs: Outputs,
     pub keybindings: Keybindings,
 }
 
@@ -189,7 +189,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
         }
     };
     for key in doc.keys() {
-        if !["general", "audio", "ui", "mcp", "sonos", "keybindings"].contains(&key.as_str()) {
+        if !["general", "audio", "ui", "mcp", "outputs", "keybindings"].contains(&key.as_str()) {
             warnings.push(format!("config: unknown section [{key}]"));
         }
     }
@@ -198,7 +198,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
         audio: section(&doc, "audio", &mut warnings),
         ui: section(&doc, "ui", &mut warnings),
         mcp: section(&doc, "mcp", &mut warnings),
-        sonos: section(&doc, "sonos", &mut warnings),
+        outputs: section(&doc, "outputs", &mut warnings),
         keybindings: section(&doc, "keybindings", &mut warnings),
     };
 
@@ -431,11 +431,12 @@ pub fn default_file_text() -> String {
          # Folders searched for songs besides the playlist (empty = the music folder)\n\
          library_dirs = []\n\
          \n\
-         [sonos]\n\
-         # Port Sonos speakers fetch songs from (0 = any free port); set one for a firewall rule\n\
+         [outputs]\n\
+         # Port Sonos speakers and Cast devices fetch songs from (0 = any free port);\n\
+         # set one for a firewall rule\n\
          http_port = 0\n\
-         # Speakers the network search cannot find (another subnet), e.g. [\"192.168.1.20\"]\n\
-         hosts = []\n\
+         # Sonos speakers the network search cannot find (another subnet), e.g. [\"192.168.1.20\"]\n\
+         sonos_hosts = []\n\
          \n\
          [keybindings]\n\
          # Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,\n\

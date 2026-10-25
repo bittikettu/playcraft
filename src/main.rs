@@ -5,7 +5,7 @@ use mp3blaster_rs::audio::{AudioConfig, AudioHandle};
 use mp3blaster_rs::library::index::LibraryIndex;
 use mp3blaster_rs::ui::app::{App, BannerLevel};
 use mp3blaster_rs::{
-    config, headless, library, log_ring, mcp, paths, playlist, remote, session, sonos, ui,
+    config, headless, library, log_ring, mcp, outputs, paths, playlist, remote, session, ui,
 };
 
 #[derive(Parser, Debug)]
@@ -26,7 +26,7 @@ struct Cli {
     #[arg(long)]
     list_devices: bool,
 
-    /// List Sonos speakers on the network and exit.
+    /// List Sonos speakers and Google Cast devices (TVs, Chromecasts) on the network and exit.
     #[arg(long)]
     list_speakers: bool,
 
@@ -68,14 +68,19 @@ fn write_default_config(path: Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn list_speakers(hosts: &[String]) -> anyhow::Result<()> {
+fn list_speakers(sonos_hosts: &[String]) -> anyhow::Result<()> {
     let wait = std::time::Duration::from_millis(1500);
-    let zones = sonos::discovery::discover(hosts, true, wait).map_err(anyhow::Error::msg)?;
-    if zones.is_empty() {
-        println!("no Sonos speakers found");
+    let devices = outputs::discover(sonos_hosts, true, wait).map_err(anyhow::Error::msg)?;
+    if devices.is_empty() {
+        println!("no Sonos speakers or Google Cast devices found");
     }
-    for zone in zones {
-        println!("{}  ({})", zone.name(), zone.coordinator.ip());
+    for device in devices {
+        println!(
+            "{}  ({}, {})",
+            device.name(),
+            device.kind(),
+            device.addr().ip()
+        );
     }
     Ok(())
 }
@@ -106,7 +111,7 @@ fn main() -> anyhow::Result<()> {
     }
     let cfg = loaded.config;
     if cli.list_speakers {
-        return list_speakers(&cfg.sonos.hosts);
+        return list_speakers(&cfg.outputs.sonos_hosts);
     }
     let audio_config = AudioConfig {
         output_device: cli.device.clone().or_else(|| cfg.output_device()),
