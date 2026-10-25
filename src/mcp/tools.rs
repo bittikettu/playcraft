@@ -293,7 +293,8 @@ network, which takes a couple of seconds.",
         title: "Play on a speaker or TV",
         description: "Moves playback to a Sonos speaker or group, or a Google Cast device, by \
 name (as list_outputs shows it, or a Sonos room), or back to \"this computer\". The music \
-continues where it is; volume then controls that device.",
+continues where it is; volume then controls that device. With visuals, a Cast device (a TV) \
+also shows the player's visualizer and the song, as a live stream a few seconds behind.",
         read_only: false,
         destructive: false,
         schema: || {
@@ -301,6 +302,7 @@ continues where it is; volume then controls that device.",
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "A speaker, group, room or TV name, or \"this computer\"." },
+                    "visuals": { "type": "boolean", "default": false, "description": "Cast devices: stream the player's pictures too." },
                 },
                 "required": ["name"],
                 "additionalProperties": false,

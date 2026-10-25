@@ -16,6 +16,7 @@ use crate::outputs::card::Card;
 use crate::outputs::link::{self, Command, Event, Status, TransportState};
 use crate::outputs::media::{self, MediaServer};
 use crate::outputs::sync::Offset;
+use crate::outputs::video::{self, TvInfo, TvVisual, VideoStream};
 use crate::outputs::{self, Device, Link, SongInfo};
 
 use super::app::{App, BannerLevel, Overlay};
@@ -84,6 +85,12 @@ pub struct OutputSettings {
     /// Where devices fetch songs: every adapter (tests use localhost).
     pub bind: IpAddr,
     pub timing: CastTiming,
+    /// ffmpeg, for streaming pictures to TVs.
+    pub ffmpeg: String,
+    /// The H.264 encoder for the TV stream, or `auto`.
+    pub tv_encoder: String,
+    /// Starts a TV stream (a stand-in in tests).
+    pub tv_stream: video::Starter,
 }
 
 impl Default for OutputSettings {
@@ -95,6 +102,9 @@ impl Default for OutputSettings {
             search_network: true,
             bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             timing: CastTiming::default(),
+            ffmpeg: "ffmpeg".into(),
+            tv_encoder: "auto".into(),
+            tv_stream: VideoStream::start,
         }
     }
 }
@@ -148,9 +158,16 @@ pub struct Cast {
     /// A pause or resume from the speaker that the local playback has yet to carry out
     /// (playing or not, and since when).
     following: Option<(bool, Instant)>,
+    /// Sound and pictures streamed to a TV, instead of songs one by one.
+    stream: Option<VideoStream>,
 }
 
 impl Cast {
+    /// The device gets the player's pictures too (a live stream).
+    pub fn visuals(&self) -> bool {
+        self.stream.is_some()
+    }
+
     fn send(&mut self, command: Command) {
         self.link.send(command);
         self.last_command = Instant::now();
@@ -203,10 +220,9 @@ impl App {
     /// Opens the output picker and looks for devices.
     pub(crate) fn open_outputs(&mut self) {
         let active = self.cast.as_ref().and_then(|c| {
-            self.devices
-                .list
+            self.output_targets()
                 .iter()
-                .position(|d| d.id() == c.device.id())
+                .position(|(d, visuals)| d.id() == c.device.id() && *visuals == c.visuals())
         });
         self.overlay = Overlay::Outputs {
             cursor: active.map_or(0, |i| i + 1),
@@ -252,8 +268,22 @@ impl App {
     }
 
     /// Keys while the output picker is open.
+    /// What the output picker offers after this computer: each device, and each Cast
+    /// device again with pictures (`true`).
+    pub(crate) fn output_targets(&self) -> Vec<(Device, bool)> {
+        let mut targets = Vec::new();
+        for device in &self.devices.list {
+            targets.push((device.clone(), false));
+            if matches!(device, Device::Cast(_)) {
+                targets.push((device.clone(), true));
+            }
+        }
+        targets
+    }
+
     pub(crate) fn on_outputs_key(&mut self, action: Action, cursor: usize) {
-        let last = self.devices.list.len();
+        let targets = self.output_targets();
+        let last = targets.len();
         let cursor = cursor.min(last);
         let moved_to = match action {
             Action::CursorUp => cursor.saturating_sub(1),
@@ -262,8 +292,8 @@ impl App {
             Action::End | Action::PageDown => last,
             Action::Activate => {
                 self.overlay = Overlay::None;
-                match cursor.checked_sub(1).and_then(|i| self.devices.list.get(i)) {
-                    Some(device) => self.start_cast(device.clone()),
+                match cursor.checked_sub(1).and_then(|i| targets.get(i)) {
+                    Some((device, visuals)) => self.start_cast(device.clone(), *visuals),
                     None => self.play_here(),
                 }
                 return;
@@ -280,9 +310,42 @@ impl App {
 
     /// Name of the output playing: a device, or this computer.
     pub fn output_name(&self) -> String {
-        self.cast
+        match &self.cast {
+            Some(c) if c.visuals() => format!("{} + visuals", c.device.name()),
+            Some(c) => c.device.name(),
+            None => "this computer".into(),
+        }
+    }
+
+    /// What the TV picture shows besides the music.
+    fn tv_info(&self) -> TvInfo {
+        let song = self
+            .now
             .as_ref()
-            .map_or_else(|| "this computer".into(), |c| c.device.name())
+            .map(|n| self.song_info(&n.path, n.duration));
+        let album = song.as_ref().and_then(|s| match (&s.album, s.year) {
+            (Some(album), Some(year)) => Some(format!("{album} ({year})")),
+            (Some(album), None) => Some(album.clone()),
+            (None, Some(year)) => Some(year.to_string()),
+            (None, None) => None,
+        });
+        TvInfo {
+            title: song
+                .as_ref()
+                .map_or_else(|| "mp3blaster-rs".into(), |s| s.title.clone()),
+            artist: song.as_ref().and_then(|s| s.artist.clone()),
+            album,
+            position: self.audio.shared().position(),
+            duration: self.now.as_ref().and_then(|n| n.duration),
+            playing: self.status() == PlaybackStatus::Playing,
+            colors: self.theme.card_colors(),
+            palette: super::views::hyperspace::palette(&self.theme),
+            visual: match self.visualizer {
+                super::app::Visualizer::Bars => TvVisual::Bars,
+                _ => TvVisual::Hyperspace,
+            },
+            track: self.track_hash(),
+        }
     }
 
     /// Moves playback back to this computer.
@@ -300,15 +363,23 @@ impl App {
     }
 
     /// Moves playback to `device`, at the current position.
-    pub(crate) fn start_cast(&mut self, device: Device) {
+    /// With `visuals`, a Cast device gets the player's sound and pictures as a live stream.
+    pub(crate) fn start_cast(&mut self, device: Device, visuals: bool) {
         if self
             .cast
             .as_ref()
-            .is_some_and(|c| c.device.id() == device.id())
+            .is_some_and(|c| c.device.id() == device.id() && c.visuals() == visuals)
         {
             self.banner(
                 BannerLevel::Info,
-                format!("Already playing on {}", device.name()),
+                format!("Already playing on {}", self.output_name()),
+            );
+            return;
+        }
+        if visuals && !matches!(device, Device::Cast(_)) {
+            self.banner(
+                BannerLevel::Warning,
+                format!("{} cannot show pictures", device.name()),
             );
             return;
         }
@@ -332,8 +403,25 @@ impl App {
             device.name(),
             device.addr()
         );
-        self.banner(BannerLevel::Info, format!("Playing on {}", device.name()));
         let link = device.connect(self.outputs.timing.link);
+        let stream = visuals.then(|| {
+            (self.outputs.tv_stream)(
+                &self.outputs.ffmpeg,
+                &self.outputs.tv_encoder,
+                self.audio.capture_slot(),
+                self.audio.shared().clone(),
+                self.tv_info(),
+            )
+        });
+        let text = if visuals {
+            format!(
+                "Starting the stream to {}; it plays a few seconds behind",
+                device.name()
+            )
+        } else {
+            format!("Playing on {}", device.name())
+        };
+        self.banner(BannerLevel::Info, text);
         self.cast = Some(Cast {
             device,
             link,
@@ -347,6 +435,7 @@ impl App {
             switch_at: None,
             volume_known: false,
             following: None,
+            stream,
         });
         self.reconcile_cast();
     }
@@ -380,7 +469,11 @@ impl App {
 
     /// Seeks `secs` from the current position.
     pub(crate) fn seek_by(&mut self, secs: i64) {
-        if self.cast.as_ref().is_some_and(|c| c.loaded.is_some()) {
+        if self
+            .cast
+            .as_ref()
+            .is_some_and(|c| c.loaded.is_some() && !c.visuals())
+        {
             let position = self.audio.shared().position().as_secs() as i64;
             self.seek_to(Duration::from_secs((position + secs).max(0) as u64));
         } else {
@@ -391,7 +484,12 @@ impl App {
     pub(crate) fn seek_to(&mut self, target: Duration) {
         let duration = self.now.as_ref().and_then(|n| n.duration);
         let settle = self.outputs.timing.settle;
-        let target = match self.cast.as_mut().filter(|c| c.loaded.is_some()) {
+        // A TV stream just carries on: the seek shows in it.
+        let target = match self
+            .cast
+            .as_mut()
+            .filter(|c| c.loaded.is_some() && !c.visuals())
+        {
             Some(cast) => {
                 // Seeks go to whole seconds (all Sonos takes), the local playback to the same.
                 let mut secs = target.as_secs();
@@ -523,6 +621,7 @@ impl App {
             }
         }
         let ours = cast.reports_ours(&status);
+        let streaming = cast.visuals();
         let fresh = settled && status.asked >= cast.settle_until;
         cast.status = Some(status.clone());
         let Some(loaded) = cast.loaded.as_mut() else {
@@ -543,6 +642,10 @@ impl App {
                 .then_some(FromSpeaker::TakenOver),
             (true, TransportState::Paused, true) if quiet => Some(FromSpeaker::Paused),
             (true, TransportState::Playing, false) if quiet => Some(FromSpeaker::Resumed),
+            // The TV stopped the stream (it never ends by itself).
+            (true, TransportState::Stopped, true) if quiet && loaded.played && streaming => {
+                Some(FromSpeaker::Stopped)
+            }
             // Stopped before the end of the track (at the end, the local playback has moved
             // on or is about to).
             (true, TransportState::Stopped, true)
@@ -556,8 +659,9 @@ impl App {
             _ => None,
         };
         let Some(from_speaker) = from_speaker else {
-            // Keep the local playback in step with the speaker.
-            let playing = status.state == TransportState::Playing && cast.playing;
+            // Keep the local playback in step with the speaker (a TV stream is behind on
+            // purpose).
+            let playing = status.state == TransportState::Playing && cast.playing && !streaming;
             if let Some(position) = status.position.filter(|_| playing && ours)
                 && local == PlaybackStatus::Playing
             {
@@ -595,8 +699,19 @@ impl App {
                 cast.playing = true;
                 cast.following = Some((true, Instant::now()));
                 cast.offset.reset();
+                if streaming {
+                    // Back to the live edge of the stream.
+                    cast.loaded = None;
+                }
                 self.audio.send(AudioCommand::Resume);
                 self.banner(BannerLevel::Info, format!("Playing on {name}"));
+            }
+            FromSpeaker::Stopped if streaming => {
+                self.end_cast(true);
+                self.banner(
+                    BannerLevel::Info,
+                    format!("{name} stopped the stream; paused here"),
+                );
             }
             FromSpeaker::Stopped => {
                 self.stop();
@@ -657,6 +772,9 @@ impl App {
 
     /// Makes the speaker play what the local playback plays.
     pub(crate) fn reconcile_cast(&mut self) {
+        if self.cast.as_ref().is_some_and(Cast::visuals) {
+            return self.reconcile_stream();
+        }
         let local = self.status();
         let want = match local {
             PlaybackStatus::Stopped => None,
@@ -768,6 +886,7 @@ impl App {
             song,
             start: begin,
             play,
+            live: false,
         });
         cast.loaded = Some(Loaded {
             start,
@@ -863,12 +982,102 @@ impl App {
     }
 }
 
-/// Stops the device if it plays for us, and ends the link (waiting at most `wait`).
+/// Stops the device if it plays for us, and ends the link (waiting at most `wait`), and
+/// the TV stream if there is one.
 fn close_link(mut cast: Cast, wait: Duration) {
+    if let Some(stream) = cast.stream.take() {
+        stream.stop(wait.min(Duration::from_millis(300)));
+    }
     if cast.loaded.is_some() {
         cast.send(Command::Stop);
     }
     cast.link.close(wait);
+}
+
+impl App {
+    /// The TV stream: once it has started, the TV is given it once; after that it just
+    /// carries whatever the player plays. Problems end the cast.
+    fn reconcile_stream(&mut self) {
+        let info = self.tv_info();
+        let start_within = self.outputs.timing.start_within;
+        let (Some(cast), Some(media)) = (self.cast.as_mut(), self.media.as_ref()) else {
+            return;
+        };
+        let Some(stream) = cast.stream.as_ref() else {
+            return;
+        };
+        stream.set_info(info);
+        let name = cast.device.name();
+        if let Some(why) = stream.failure() {
+            self.end_cast(true);
+            self.banner(
+                BannerLevel::Error,
+                format!("The stream to {name} stopped: {why}"),
+            );
+            return;
+        }
+        let Some(loaded) = cast.loaded.as_mut() else {
+            if !stream.ready() {
+                return;
+            }
+            let addr = cast.device.addr();
+            let url = match media.dir_url_for(stream.dir(), stream.playlist_name(), addr) {
+                Ok(url) => url,
+                Err(e) => {
+                    self.end_cast(true);
+                    self.banner(BannerLevel::Error, format!("Cannot reach {name}: {e}"));
+                    return;
+                }
+            };
+            let path = url
+                .strip_prefix("http://")
+                .and_then(|rest| rest.find('/').map(|i| rest[i..].to_string()))
+                .unwrap_or_else(|| url.clone());
+            log::info!("{name}: streaming {url}");
+            cast.send(Command::Load {
+                url,
+                mime: "application/x-mpegURL".into(),
+                song: SongInfo {
+                    title: "mp3blaster-rs".into(),
+                    ..SongInfo::default()
+                },
+                start: Duration::ZERO,
+                play: true,
+                live: true,
+            });
+            cast.loaded = Some(Loaded {
+                start: self.track_starts,
+                path,
+                wav: false,
+                refused: false,
+                at: Instant::now(),
+                played: false,
+                checked: false,
+            });
+            cast.playing = true;
+            return;
+        };
+        // A TV that never plays the stream: refused, or it cannot reach us.
+        let answering = cast.status.as_ref().is_some_and(|s| s.answered > loaded.at);
+        let due = loaded.refused || loaded.at.elapsed() >= start_within;
+        if !answering || loaded.played || loaded.checked || !due {
+            return;
+        }
+        loaded.checked = true;
+        let fetched = media.fetches(&loaded.path) > 0;
+        let port = media.port();
+        self.end_cast(true);
+        let why = if fetched {
+            format!("{name} could not play the stream")
+        } else {
+            format!(
+                "{name} cannot fetch the stream from this computer. Allow mp3blaster-rs \
+                 through the firewall for private networks (port {port}), then pick it again \
+                 with o."
+            )
+        };
+        self.banner(BannerLevel::Error, why);
+    }
 }
 
 #[cfg(test)]
@@ -986,7 +1195,7 @@ mod tests {
         let (mut app, fake) = setup();
         app.set_volume(0.8);
         play(&mut app, 0);
-        app.start_cast(Device::Sonos(fake.zone()));
+        app.start_cast(Device::Sonos(fake.zone()), false);
         assert!(app.audio.shared().muted(), "this computer goes quiet");
         assert_eq!(banner(&app), "Playing on Living Room");
 
@@ -1044,7 +1253,7 @@ mod tests {
     fn a_track_that_ends_by_itself_finishes_on_the_speaker_first() {
         let (mut app, fake) = setup();
         play(&mut app, 0);
-        app.start_cast(Device::Sonos(fake.zone()));
+        app.start_cast(Device::Sonos(fake.zone()), false);
         wait_speaker(&mut app, &fake, "play", |s| s.transport == "PLAYING");
         {
             let mut s = fake.state();
@@ -1080,7 +1289,7 @@ mod tests {
     fn the_local_playback_keeps_in_step_with_the_speaker() {
         let (mut app, fake) = setup();
         play(&mut app, 0);
-        app.start_cast(Device::Sonos(fake.zone()));
+        app.start_cast(Device::Sonos(fake.zone()), false);
         wait_speaker(&mut app, &fake, "play", |s| s.transport == "PLAYING");
         // The speaker is a second in, the (stalled, in tests) local playback at 0.
         fake.state().position = Duration::from_secs(1);
@@ -1094,7 +1303,7 @@ mod tests {
     fn changes_made_on_the_speaker_are_followed() {
         let (mut app, fake) = setup();
         play(&mut app, 0);
-        app.start_cast(Device::Sonos(fake.zone()));
+        app.start_cast(Device::Sonos(fake.zone()), false);
         wait_speaker(&mut app, &fake, "play", |s| s.transport == "PLAYING");
 
         fake.state().transport = "PAUSED_PLAYBACK".into();
@@ -1128,7 +1337,7 @@ mod tests {
         let (mut app, fake) = setup();
         fake.state().fetch = false;
         play(&mut app, 0);
-        app.start_cast(Device::Sonos(fake.zone()));
+        app.start_cast(Device::Sonos(fake.zone()), false);
         wait_app(&mut app, "cast ended", |a| a.cast.is_none());
         let text = banner(&app);
         assert!(text.contains("firewall"), "{text}");
@@ -1144,7 +1353,7 @@ mod tests {
         let (mut app, fake) = setup();
         fake.state().refuse.push(".mp3".into());
         play(&mut app, 0);
-        app.start_cast(Device::Sonos(fake.zone()));
+        app.start_cast(Device::Sonos(fake.zone()), false);
         wait_speaker(&mut app, &fake, "WAV", |s| {
             s.uri.ends_with(".wav") && s.transport == "PLAYING"
         });
@@ -1160,7 +1369,7 @@ mod tests {
         let (mut app, fake) = setup();
         fake.state().fail.insert("Play".into(), 701);
         play(&mut app, 0);
-        app.start_cast(Device::Sonos(fake.zone()));
+        app.start_cast(Device::Sonos(fake.zone()), false);
         let next = app.root.tracks[1].uid;
         wait_app(&mut app, "skipped", |a| a.pending_load == Some(next));
         let text = banner(&app);
@@ -1182,7 +1391,7 @@ mod tests {
         tv.state().other_app = Some("Netflix".into());
         app.set_volume(0.8);
         play(&mut app, 0);
-        app.start_cast(Device::Cast(tv.device()));
+        app.start_cast(Device::Cast(tv.device()), false);
         assert!(app.audio.shared().muted());
 
         // The TV starts its media player and fetches the song, with its tags.
@@ -1266,7 +1475,7 @@ mod tests {
         tv.state().fetch = false;
         tv.state().refuse.push("audio/mpeg".into());
         play(&mut app, 0);
-        app.start_cast(Device::Cast(tv.device()));
+        app.start_cast(Device::Cast(tv.device()), false);
         wait_app(&mut app, "cast ended", |a| a.cast.is_none());
         let text = banner(&app);
         assert!(text.contains("firewall"), "{text}");
@@ -1279,7 +1488,7 @@ mod tests {
         let (mut app, _) = setup();
         let tv = FakeCast::start("Televisio");
         play(&mut app, 0);
-        app.start_cast(Device::Cast(tv.device()));
+        app.start_cast(Device::Cast(tv.device()), false);
         wait_app(&mut app, "playing on the TV", |a| {
             a.cast.as_ref().and_then(|c| c.state()) == Some(TransportState::Playing)
         });
@@ -1296,6 +1505,139 @@ mod tests {
         });
     }
 
+    /// Runs the app's loop until `check` holds for the pretend TV.
+    fn wait_tv(
+        app: &mut App,
+        tv: &crate::outputs::cast::fake::FakeCast,
+        what: &str,
+        check: impl Fn(&crate::outputs::cast::fake::FakeCastState) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !check(&tv.state()) {
+            app.process_outputs();
+            app.process_audio_events();
+            assert!(
+                Instant::now() < deadline,
+                "TV never got to: {what}; messages: {:?}; banner: {:?}",
+                tv.state().messages,
+                app.banner
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_tv_gets_sound_and_pictures_as_one_live_stream() {
+        use crate::outputs::cast::fake::FakeCast;
+        let (mut app, _) = setup();
+        app.outputs.tv_stream = VideoStream::stand_in;
+        let tv = FakeCast::start("Televisio");
+        app.devices.list = vec![Device::Cast(tv.device())];
+        play(&mut app, 0);
+        // The picker offers the TV twice: as a speaker, and with pictures.
+        app.on_action(Action::OutputSelector);
+        let screen = render(&mut app, 100, 30);
+        assert!(screen.contains("Televisio + visuals"), "{screen}");
+        app.on_key(KeyBinding::plain('j'));
+        app.on_key(KeyBinding::plain('j'));
+        app.on_key(enter());
+        assert!(app.cast.as_ref().is_some_and(Cast::visuals));
+        assert_eq!(app.output_name(), "Televisio + visuals");
+        assert!(app.audio.shared().muted());
+
+        // The TV gets the live stream, fetches its playlist from us, and plays it.
+        wait_tv(&mut app, &tv, "the stream", |s| {
+            s.stream_type == "LIVE" && s.player_state == "PLAYING" && s.fetched.is_some()
+        });
+        assert_eq!(tv.state().content_type, "application/x-mpegURL");
+        assert!(String::from_utf8_lossy(tv.state().fetched.as_ref().unwrap()).contains("#EXTINF"));
+        let status = app
+            .run_tool("Claude", "get_status", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(status["output"]["visuals"], true);
+
+        // A new song, a seek, a pause: all in the stream, nothing sent to the TV.
+        app.on_action(Action::NextTrack);
+        started(&mut app, 1);
+        app.seek_to(Duration::from_millis(1_400));
+        app.on_action(Action::PlayPause);
+        wait_app(&mut app, "paused", |a| a.status() == PlaybackStatus::Paused);
+        let until = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < until {
+            app.process_outputs();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        {
+            let s = tv.state();
+            assert_eq!(s.count("media LOAD"), 1, "{:?}", s.messages);
+            assert_eq!(s.count("media SEEK") + s.count("media PAUSE"), 0);
+        }
+        let info = app.cast.as_ref().unwrap().stream.as_ref().unwrap().info();
+        assert_eq!(info.title, "chirp_full");
+        assert!(!info.playing);
+        app.on_action(Action::PlayPause);
+
+        // Paused with the TV's remote: the player pauses; resumed: back to the live edge.
+        wait_app(&mut app, "playing again", |a| {
+            a.status() == PlaybackStatus::Playing
+        });
+        tv.state().player_state = "PAUSED".into();
+        wait_app(&mut app, "paused here", |a| {
+            a.status() == PlaybackStatus::Paused
+        });
+        tv.state().player_state = "PLAYING".into();
+        wait_tv(&mut app, &tv, "a fresh load", |s| {
+            s.count("media LOAD") == 2
+        });
+        assert_eq!(app.status(), PlaybackStatus::Playing);
+
+        // Back to this computer: the TV's player app closes, the stream stops.
+        let dir = app
+            .cast
+            .as_ref()
+            .unwrap()
+            .stream
+            .as_ref()
+            .unwrap()
+            .dir()
+            .to_path_buf();
+        app.play_here();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while tv.state().app {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!dir.exists());
+        assert!(!app.audio.shared().muted());
+    }
+
+    #[test]
+    fn a_stream_that_fails_ends_the_cast() {
+        use crate::outputs::cast::fake::FakeCast;
+        let (mut app, _) = setup();
+        app.outputs.tv_stream = VideoStream::stand_in;
+        let tv = FakeCast::start("Televisio");
+        play(&mut app, 0);
+        app.start_cast(Device::Cast(tv.device()), true);
+        wait_tv(&mut app, &tv, "the stream", |s| s.stream_type == "LIVE");
+        let stream = app.cast.as_ref().unwrap().stream.as_ref().unwrap();
+        stream.fail("ffmpeg stopped");
+        wait_app(&mut app, "cast ended", |a| a.cast.is_none());
+        assert_eq!(
+            banner(&app),
+            "The stream to Televisio stopped: ffmpeg stopped"
+        );
+        wait_app(&mut app, "paused here", |a| {
+            a.status() == PlaybackStatus::Paused
+        });
+
+        // Sonos speakers cannot show pictures.
+        let sonos = FakeSonos::start("Kitchen");
+        app.start_cast(Device::Sonos(sonos.zone()), true);
+        assert!(app.cast.is_none());
+        assert_eq!(banner(&app), "Kitchen cannot show pictures");
+    }
+
     #[test]
     fn a_speaker_that_goes_away_hands_back_to_this_computer_paused() {
         let (mut app, fake) = setup();
@@ -1306,7 +1648,7 @@ mod tests {
             .unwrap();
         let mut zone = fake.zone();
         zone.coordinator = gone;
-        app.start_cast(Device::Sonos(zone));
+        app.start_cast(Device::Sonos(zone), false);
         wait_app(&mut app, "cast ended", |a| a.cast.is_none());
         let text = banner(&app);
         assert!(text.starts_with("Lost Living Room"), "{text}");

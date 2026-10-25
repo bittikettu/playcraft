@@ -4,7 +4,7 @@
 mod defrag;
 mod file_manager;
 mod help;
-mod hyperspace;
+pub(crate) mod hyperspace;
 mod log;
 mod now_playing;
 mod outputs;

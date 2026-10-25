@@ -223,6 +223,19 @@ Pick one with Enter and the music moves there, from the same spot. Pick **This c
 
 **Casting to a TV** starts the TV's own media player (Google's Default Media Receiver), like casting from a phone does. It replaces whatever the TV shows, and it closes again when you switch back to this computer.
 
+**TV visuals.** The picker lists each Cast device twice. Pick **"Televisio + visuals"** (with your TV's name) to send the player's pictures as well as its sound, as one live video stream:
+- **The picture** is drawn for the TV at 720p: HYPERSPACE, or the spectrum bars when that is the player's visualizer (Matrix and Defrag show HYPERSPACE on the TV). The theme's colours are used.
+- **A "Now Playing" strip** along the bottom shows the title, artist, album, the time, and Pac-Man eating his way through the song.
+- **About 3–5 seconds behind.** The TV plays it like a live broadcast, so pausing, skipping and seeking show up on the TV a few seconds later. Picture and sound on the TV stay together.
+- **Pausing with the TV's remote** pauses the player; playing again jumps back to the live picture.
+- **It needs [ffmpeg](https://ffmpeg.org)**, which encodes the stream (`winget install Gyan.FFmpeg` on Windows). The player picks the first H.264 encoder that works: NVIDIA (NVENC), Intel (Quick Sync) or AMD graphics, else the x264 software encoder. With a graphics card's encoder, streaming takes little CPU.
+
+```toml
+[outputs]
+ffmpeg = "ffmpeg"        # or the full path to ffmpeg.exe
+tv_encoder = "auto"      # or e.g. "libx264", "h264_nvenc"
+```
+
 **How it works:**
 - **Finding devices:** the player uses the same network searches as the Sonos and Google Home apps (SSDP and mDNS).
 - **Control:** Sonos speakers over UPnP, Cast devices over the Cast protocol, which is encrypted (TLS).
@@ -254,7 +267,7 @@ AI assistants that speak the [Model Context Protocol](https://modelcontextprotoc
 - "Queue a few songs from the 80s."
 - "What's playing?"
 - "Show HYPERSPACE fullscreen."
-- "Play this in the living room." / "Put the music on the TV."
+- "Play this in the living room." / "Put the music on the TV, with the visuals."
 
 **How it works.** `mp3blaster-rs --mcp` is the MCP server the assistant starts. It speaks MCP over stdin/stdout and forwards each tool call to the player running in your terminal, which carries it out and shows a banner such as "Claude Code: queued 5 tracks". Start the player yourself as usual. If it isn't running, the assistant is told so.
 
@@ -296,7 +309,7 @@ claude mcp add mp3blaster -- "C:\path\to\mp3blaster-rs.exe" --mcp
 | `playback`, `seek`, `set_volume` | Play, pause, toggle, stop, next and previous; seeking; volume. |
 | `set_visualizer` | Sets the style (bars, matrix, defrag, hyperspace), fullscreen, the spectrum layout, and the progress bar style. |
 | `set_play_options`, `set_theme` | Play mode and repeat; the colour theme for this session. |
-| `list_outputs`, `set_output` | List this computer, the Sonos speakers and the Cast devices; move playback to one (by name, or a Sonos room) or back. |
+| `list_outputs`, `set_output` | List this computer, the Sonos speakers and the Cast devices; move playback to one (by name, or a Sonos room) or back. `visuals` sends a TV the player's pictures too. |
 
 **Search covers the playlist and your music folder.** On the first request, the player indexes the music folder in the background and caches the tags in `library.json` in its state folder. Later starts re-read only the files that changed. A song found only in the folder is added to a "Requests" group in the playlist when it is queued. Every action an assistant takes is also written to the message log (`L`).
 
@@ -338,7 +351,7 @@ library_dirs = ["D:/Music", "E:/Archive"]   # folders to search; empty = the mus
   - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `v`, `p`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, `o`, and the play queue (`e`/Ins, `u`, `X`);
   - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, `[ui] progress_style`, and the `[mcp]` and `[outputs]` sections;
   - AI control through MCP (`--mcp`), with a play queue and music folder search;
-  - playing on Sonos speakers and Google Cast devices (`o`, `--list-speakers`);
+  - playing on Sonos speakers and Google Cast devices (`o`, `--list-speakers`), with the player's pictures on TVs (needs ffmpeg);
   - the `[keybindings.file_manager]` section.
 - **Key conflict:** the spec's UI mockup shows F1 as Help, but its key table says F1 opens the file manager. The key table wins, so Help is `?`.
 

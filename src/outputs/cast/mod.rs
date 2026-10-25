@@ -292,6 +292,7 @@ impl Session {
         song: &SongInfo,
         start: Duration,
         play: bool,
+        live: bool,
     ) -> Result<(), CastError> {
         let transport = self.ensure_app()?;
         let session = self.app.as_ref().map(|a| a.session.clone());
@@ -314,19 +315,25 @@ impl Session {
         let mut media = json!({
             "contentId": url,
             "contentType": mime,
-            "streamType": "BUFFERED",
+            "streamType": if live { "LIVE" } else { "BUFFERED" },
             "metadata": metadata,
         });
-        if let Some(d) = song.duration {
-            media["duration"] = seconds(d).into();
-        }
-        let load = json!({
+        let mut load = json!({
             "type": "LOAD",
             "sessionId": session,
-            "media": media,
             "autoplay": play,
-            "currentTime": seconds(start),
         });
+        if live {
+            // HLS of MPEG-TS segments (the TV stream), played from its live edge.
+            media["hlsSegmentFormat"] = "ts".into();
+            media["hlsVideoSegmentFormat"] = "mpeg2_ts".into();
+        } else {
+            if let Some(d) = song.duration {
+                media["duration"] = seconds(d).into();
+            }
+            load["currentTime"] = seconds(start).into();
+        }
+        load["media"] = media;
         self.playback_failed = false;
         self.media = Media::default();
         let reply = self.request(NS_MEDIA, &transport, load, "LOAD", LOAD_TIMEOUT)?;
@@ -434,7 +441,8 @@ fn execute(session: &mut Session, command: Command) -> Result<(), CastError> {
             song,
             start,
             play,
-        } => session.load(&url, &mime, &song, start, play),
+            live,
+        } => session.load(&url, &mime, &song, start, play, live),
         Command::Play => session.media_command("PLAY", json!({})),
         Command::Pause => session.media_command("PAUSE", json!({})),
         Command::Stop => session.media_command("STOP", json!({})),
@@ -554,6 +562,7 @@ mod tests {
             },
             start,
             play,
+            live: false,
         }
     }
 
@@ -612,6 +621,26 @@ mod tests {
         assert_eq!(st.player_state, "IDLE");
         assert!(!st.app);
         assert_eq!(st.count("connection CLOSE"), 1);
+    }
+
+    #[test]
+    fn live_streams_load_as_live() {
+        let fake = FakeCast::start("Televisio");
+        let mut link = start(fake.device(), quick());
+        let sent = link.send(Command::Load {
+            url: "x-test:live.m3u8".into(),
+            mime: "application/x-mpegURL".into(),
+            song: SongInfo::default(),
+            start: Duration::from_secs(5),
+            play: true,
+            live: true,
+        });
+        next_status(&link, |s| {
+            s.done == sent && s.track_uri == "x-test:live.m3u8"
+        });
+        let st = fake.state();
+        assert_eq!(st.stream_type, "LIVE");
+        assert_eq!(st.content_type, "application/x-mpegURL");
     }
 
     #[test]

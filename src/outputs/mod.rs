@@ -12,6 +12,7 @@ pub mod media;
 pub mod pixels;
 pub mod sonos;
 pub mod sync;
+pub mod video;
 pub mod wav;
 
 use std::io;

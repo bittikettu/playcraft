@@ -25,6 +25,8 @@ pub struct CardColors {
     pub low: [u8; 3],
     pub mid: [u8; 3],
     pub hot: [u8; 3],
+    /// For highlights such as Pac-Man (the theme's warning colour, often yellow).
+    pub accent: [u8; 3],
 }
 
 /// What a card shows.
@@ -153,6 +155,7 @@ mod tests {
         low: [0x50, 0xfa, 0x7b],
         mid: [0xff, 0x79, 0xc6],
         hot: [0xff, 0x55, 0x55],
+        accent: [0xf1, 0xfa, 0x8c],
     };
 
     fn card(title: &str) -> Card {

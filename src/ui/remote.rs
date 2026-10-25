@@ -125,6 +125,9 @@ struct OutputsArgs {
 #[serde(deny_unknown_fields)]
 struct OutputArgs {
     name: String,
+    /// A TV gets the player's pictures too.
+    #[serde(default)]
+    visuals: bool,
 }
 
 /// Names that mean this computer in `set_output`.
@@ -927,6 +930,7 @@ impl App {
             None => json!({ "name": "this computer", "kind": "computer" }),
             Some(cast) => {
                 let mut out = device_json(&cast.device);
+                out["visuals"] = cast.visuals().into();
                 if let Some(state) = cast.state() {
                     out["device_state"] = state.label().into();
                 }
@@ -936,7 +940,7 @@ impl App {
     }
 
     fn outputs_json(&self) -> Value {
-        let active = self.cast.as_ref().map(|c| c.device.id());
+        let active = self.cast.as_ref().map(|c| (c.device.id(), c.visuals()));
         let mut outputs = vec![json!({
             "name": "this computer",
             "kind": "computer",
@@ -944,7 +948,13 @@ impl App {
         })];
         outputs.extend(self.devices.list.iter().map(|d| {
             let mut out = device_json(d);
-            out["active"] = (active == Some(d.id())).into();
+            out["active"] = active.is_some_and(|(id, _)| id == d.id()).into();
+            if let Device::Cast(_) = d {
+                // It can also get the player's pictures (set_output with visuals).
+                out["visuals"] = active
+                    .filter(|(id, _)| *id == d.id())
+                    .map_or(Value::String("available".into()), |(_, on)| on.into());
+            }
             out
         }));
         let mut result = json!({ "outputs": outputs, "playing_on": self.output_name() });
@@ -995,7 +1005,7 @@ impl App {
                 names.join(", ")
             ));
         };
-        self.start_cast(device);
+        self.start_cast(device, args.visuals);
         match &self.cast {
             Some(_) => {
                 let text = format!("{client}: playing on {}", self.output_name());

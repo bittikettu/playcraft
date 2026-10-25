@@ -19,15 +19,17 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, cursor: usize) {
         key(Action::Close)
     );
     let devices = &app.devices;
-    let active = app.cast.as_ref().map(|c| c.device.id());
+    let active = app.cast.as_ref().map(|c| (c.device.id(), c.visuals()));
     // Name, what it is, and whether it plays now.
     let mut names = vec![("This computer".to_string(), "", active.is_none())];
-    names.extend(
-        devices
-            .list
-            .iter()
-            .map(|d| (d.name(), d.kind(), active == Some(d.id()))),
-    );
+    names.extend(app.output_targets().iter().map(|(d, visuals)| {
+        let name = if *visuals {
+            format!("{} + visuals", d.name())
+        } else {
+            d.name()
+        };
+        (name, d.kind(), active == Some((d.id(), *visuals)))
+    }));
 
     let mut notes: Vec<(String, ratatui::style::Style)> = Vec::new();
     if devices.searching.is_some() {

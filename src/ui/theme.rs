@@ -257,6 +257,7 @@ impl Theme {
             low: style_rgb(self.spectrum, text),
             mid: style_rgb(self.spectrum_mid, text),
             hot: style_rgb(self.spectrum_hot, text),
+            accent: style_rgb(self.warning, text),
         }
     }
 

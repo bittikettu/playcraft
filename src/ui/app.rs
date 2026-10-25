@@ -403,6 +403,8 @@ impl App {
         self.outputs.sonos_hosts = config.outputs.sonos_hosts.clone();
         self.outputs.cover_art = super::cast::CoverArt::from_name(&config.outputs.cover_art)
             .unwrap_or(super::cast::CoverArt::Themed);
+        self.outputs.ffmpeg = config.outputs.ffmpeg.clone();
+        self.outputs.tv_encoder = config.outputs.tv_encoder.clone();
         self.fm.go_to(
             crate::library::fs_browser::Location::Dir(config.music_dir()),
             None,
@@ -543,7 +545,7 @@ impl App {
     }
 
     /// Tells one playing track from the next.
-    fn track_hash(&self) -> Option<u64> {
+    pub(crate) fn track_hash(&self) -> Option<u64> {
         self.now.as_ref().map(|n| {
             let mut h = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(&n.path, &mut h);

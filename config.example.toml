@@ -49,6 +49,10 @@ sonos_hosts = []
 # Cover art on TVs and in the Sonos app: themed (a card drawn in the player's colour
 # theme) or album (the album's own art when there is some)
 cover_art = "themed"
+# ffmpeg, which encodes the stream when a TV shows the player's pictures (+ visuals)
+ffmpeg = "ffmpeg"
+# Its H.264 encoder: auto (a graphics card's, else libx264), or e.g. libx264
+tv_encoder = "auto"
 
 [keybindings]
 # Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,

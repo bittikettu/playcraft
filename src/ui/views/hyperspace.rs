@@ -20,7 +20,7 @@ fn rgb_of(color: Option<Color>) -> Option<Rgb> {
 }
 
 /// The theme's accent colours as neon, on a background darker than the theme's own.
-fn palette(theme: &Theme) -> Palette {
+pub(crate) fn palette(theme: &Theme) -> Palette {
     let fg = |s: Style| rgb_of(s.fg);
     let accents = [
         fg(theme.title),

@@ -82,6 +82,7 @@ fn execute(
             song,
             start,
             play,
+            ..
         } => {
             *pending_seek = (start >= MIN_SEEK).then_some(start);
             speaker.set_uri(&url, &didl(&url, &mime, &song))?;
@@ -218,6 +219,7 @@ mod tests {
             song: SongInfo::default(),
             start: Duration::from_secs(start),
             play,
+            live: false,
         }
     }
 
@@ -289,8 +291,16 @@ mod tests {
         assert_eq!(s.precision, PRECISION);
         assert_eq!(s.volume, Some(40));
         assert!(s.asked <= s.answered);
+        // The commands, in order (a status read may come before or between them).
+        let commands: Vec<String> = fake
+            .state()
+            .actions
+            .iter()
+            .filter(|a| !a.starts_with("Get"))
+            .cloned()
+            .collect();
         assert_eq!(
-            fake.state().actions[..4],
+            commands[..4],
             ["SetAVTransportURI", "Play", "Seek", "SetGroupVolume"]
         );
         assert!(fake.state().metadata.contains("audio/flac"));

@@ -66,13 +66,15 @@ pub struct SongInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// Loads `url` (a `mime` file) and goes to `start`; plays it when `play` is set.
+    /// Loads `url` (a `mime` file) and goes to `start`; plays it when `play` is set. A
+    /// `live` stream (the TV stream) has no start or end.
     Load {
         url: String,
         mime: String,
         song: SongInfo,
         start: Duration,
         play: bool,
+        live: bool,
     },
     Play,
     Pause,

@@ -36,6 +36,8 @@ pub fn mime_type(path: &Path) -> &'static str {
         Some("aac") => "audio/aac",
         Some("m4a" | "mp4") => "audio/mp4",
         Some("jpg" | "jpeg") => "image/jpeg",
+        Some("m3u8") => "application/vnd.apple.mpegurl",
+        Some("ts") => "video/mp2t",
         Some("png") => "image/png",
         _ => "application/octet-stream",
     }
@@ -113,6 +115,8 @@ enum Kind {
     Art,
     /// A cover card drawn for it (by the hash of what the card shows).
     Card(u64),
+    /// A folder whose files are served by name (the TV stream).
+    Dir,
 }
 
 #[derive(Default)]
@@ -246,6 +250,13 @@ impl MediaServer {
         path
     }
 
+    /// The full URL of `name` in the folder `dir` (published on first use), for a device
+    /// at `device`. Only plain file names in it are served.
+    pub fn dir_url_for(&self, dir: &Path, name: &str, device: SocketAddr) -> io::Result<String> {
+        let path = self.publish_as(dir, Kind::Dir, "hls");
+        self.url(&format!("{path}/{name}"), device)
+    }
+
     /// The full URL of a cover card for `song`, for a device at `device`.
     pub fn card_url_for(&self, song: &Path, card: Card, device: SocketAddr) -> Option<String> {
         self.url(&self.publish_card(song, card), device).ok()
@@ -314,6 +325,16 @@ fn serve(mut stream: TcpStream, secret: &str, published: &Mutex<Published>) -> i
     let (request_line, headers) = http::read_head(&mut BufReader::new(stream.try_clone()?))?;
     let mut parts = request_line.split_whitespace();
     let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    if method == "OPTIONS" {
+        // A web player (the TV's) asking whether it may fetch from us.
+        return reply(
+            &mut stream,
+            "204 No Content",
+            "Access-Control-Allow-Origin: *\r\n\
+             Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n\
+             Access-Control-Allow-Headers: *\r\n",
+        );
+    }
     if method != "GET" && method != "HEAD" {
         return reply(
             &mut stream,
@@ -331,6 +352,7 @@ fn serve(mut stream: TcpStream, secret: &str, published: &Mutex<Published>) -> i
                 Kind::Wav => " as WAV",
                 Kind::Art => "'s cover",
                 Kind::Card(_) => "'s cover card",
+                Kind::Dir => " (a stream)",
             };
             log::info!(
                 "{} is fetching {}{how}",
@@ -348,6 +370,7 @@ fn serve(mut stream: TcpStream, secret: &str, published: &Mutex<Published>) -> i
     };
     match kind {
         Kind::File => {}
+        Kind::Dir => return serve_from_dir(stream, &path, target, method),
         Kind::Wav => return serve_wav(stream, &path, method, &headers),
         Kind::Art => {
             let Some((data, mime)) = embedded_art(&path) else {
@@ -392,6 +415,39 @@ fn serve(mut stream: TcpStream, secret: &str, published: &Mutex<Published>) -> i
     if method == "GET" {
         file.seek(SeekFrom::Start(start))?;
         io::copy(&mut file.take(count), &mut stream)?;
+    }
+    stream.flush()
+}
+
+/// A plain file name: letters, digits, `_`, `-` and dots, but not `..`.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains("..")
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+/// Serves `.../<id>.hls/<name>` from the folder `dir`, never cached (it changes as the
+/// stream goes on).
+fn serve_from_dir(mut stream: TcpStream, dir: &Path, target: &str, method: &str) -> io::Result<()> {
+    let name = target
+        .split_once(".hls/")
+        .map(|(_, name)| name)
+        .filter(|name| plain_name(name));
+    let data = name.and_then(|name| std::fs::read(dir.join(name)).ok().map(|d| (name, d)));
+    let Some((name, data)) = data else {
+        return reply(&mut stream, "404 Not Found", "");
+    };
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
+         Cache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        mime_type(Path::new(name)),
+        data.len()
+    )?;
+    if method == "GET" {
+        stream.write_all(&data)?;
     }
     stream.flush()
 }
@@ -610,6 +666,62 @@ mod tests {
         assert_eq!(body, PNG);
         let url = server.art_url_for(&song, addr).unwrap();
         assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+    }
+
+    #[test]
+    fn serves_a_stream_folder_by_name_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("live.m3u8"),
+            "#EXTM3U
+",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("seg00001.ts"), [0x47u8; 376]).unwrap();
+        std::fs::write(dir.path().parent().unwrap().join("secret.txt"), "no").ok();
+        let server = MediaServer::start(Ipv4Addr::LOCALHOST.into(), 0).unwrap();
+        let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), server.port());
+        let url = server.dir_url_for(dir.path(), "live.m3u8", addr).unwrap();
+        let rest = url.strip_prefix("http://").unwrap();
+        let path = &rest[rest.find('/').unwrap()..];
+        let (status, head, body) = get(addr, path, None);
+        assert_eq!(status, 200);
+        assert!(
+            head.contains("Content-Type: application/vnd.apple.mpegurl"),
+            "{head}"
+        );
+        assert!(head.contains("Cache-Control: no-cache"), "{head}");
+        assert!(head.contains("Access-Control-Allow-Origin: *"), "{head}");
+        assert_eq!(
+            body,
+            b"#EXTM3U
+"
+        );
+        let segment = path.replace("live.m3u8", "seg00001.ts");
+        let (status, head, body) = get(addr, &segment, None);
+        assert_eq!(status, 200);
+        assert!(head.contains("Content-Type: video/mp2t"), "{head}");
+        assert_eq!(body.len(), 376);
+        for bad in [
+            "../secret.txt",
+            "..%2Fsecret.txt",
+            "",
+            "a/b.ts",
+            "missing.ts",
+        ] {
+            let (status, _, _) = get(addr, &path.replace("live.m3u8", bad), None);
+            assert_eq!(status, 404, "{bad}");
+        }
+        let mut options = TcpStream::connect(addr).unwrap();
+        write!(options, "OPTIONS {path} HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let mut answer = String::new();
+        options.read_to_string(&mut answer).unwrap();
+        assert!(answer.starts_with("HTTP/1.1 204"), "{answer}");
+        assert!(
+            answer.contains("Access-Control-Allow-Origin: *"),
+            "{answer}"
+        );
+        assert!(server.fetches(path) >= 2);
     }
 
     #[test]

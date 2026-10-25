@@ -114,6 +114,11 @@ pub struct Outputs {
     pub sonos_hosts: Vec<String>,
     /// The cover art devices show: `themed` (a card in the player's theme) or `album`.
     pub cover_art: String,
+    /// ffmpeg, which encodes the TV stream (sound and pictures).
+    pub ffmpeg: String,
+    /// The H.264 encoder for the TV stream: `auto` (a graphics card's, else x264) or a name
+    /// such as `libx264` or `h264_nvenc`.
+    pub tv_encoder: String,
 }
 
 impl Default for Outputs {
@@ -122,6 +127,8 @@ impl Default for Outputs {
             http_port: 0,
             sonos_hosts: Vec::new(),
             cover_art: "themed".into(),
+            ffmpeg: "ffmpeg".into(),
+            tv_encoder: "auto".into(),
         }
     }
 }
@@ -472,6 +479,10 @@ pub fn default_file_text() -> String {
          # Cover art on TVs and in the Sonos app: themed (a card drawn in the player's colour\n\
          # theme) or album (the album's own art when there is some)\n\
          cover_art = \"themed\"\n\
+         # ffmpeg, which encodes the stream when a TV shows the player's pictures (+ visuals)\n\
+         ffmpeg = \"ffmpeg\"\n\
+         # Its H.264 encoder: auto (a graphics card's, else libx264), or e.g. libx264\n\
+         tv_encoder = \"auto\"\n\
          \n\
          [keybindings]\n\
          # Uncomment and edit to rebind. Keys: letters, Space, Enter, Esc, Tab, Backspace, Del,\n\
