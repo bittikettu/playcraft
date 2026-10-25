@@ -437,8 +437,10 @@ fn serve_from_dir(mut stream: TcpStream, dir: &Path, target: &str, method: &str)
         .filter(|name| plain_name(name));
     let data = name.and_then(|name| std::fs::read(dir.join(name)).ok().map(|d| (name, d)));
     let Some((name, data)) = data else {
+        log::info!("stream: {target} not found");
         return reply(&mut stream, "404 Not Found", "");
     };
+    let started = std::time::Instant::now();
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
@@ -449,7 +451,17 @@ fn serve_from_dir(mut stream: TcpStream, dir: &Path, target: &str, method: &str)
     if method == "GET" {
         stream.write_all(&data)?;
     }
-    stream.flush()
+    stream.flush()?;
+    // How fast the TV takes the stream: slow sends mean too little bandwidth.
+    let took = started.elapsed();
+    if name.ends_with(".ts") || took > std::time::Duration::from_millis(300) {
+        log::info!(
+            "stream: sent {name} ({} KB) in {} ms",
+            data.len() / 1024,
+            took.as_millis()
+        );
+    }
+    Ok(())
 }
 
 /// Sends the response head for a file of `len` bytes, honouring a byte range. Returns the

@@ -226,7 +226,7 @@ Pick one with Enter and the music moves there, from the same spot. Pick **This c
 **TV visuals.** The picker lists each Cast device twice. Pick **"Televisio + visuals"** (with your TV's name) to send the player's pictures as well as its sound, as one live video stream:
 - **The picture** is drawn for the TV at 720p: HYPERSPACE, or the spectrum bars when that is the player's visualizer (Matrix and Defrag show HYPERSPACE on the TV). The theme's colours are used.
 - **A "Now Playing" strip** along the bottom shows the title, artist, album, the time, and Pac-Man eating his way through the song.
-- **About 3–5 seconds behind.** The TV plays it like a live broadcast, so pausing, skipping and seeking show up on the TV a few seconds later. Picture and sound on the TV stay together.
+- **About 6–8 seconds behind.** The TV plays it like a live broadcast (in 2-second pieces, a few of them buffered), so pausing, skipping and seeking show up on the TV that much later. Picture and sound on the TV stay together.
 - **Pausing with the TV's remote** pauses the player; playing again jumps back to the live picture.
 - **It needs [ffmpeg](https://ffmpeg.org)**, which encodes the stream (`winget install Gyan.FFmpeg` on Windows). The player picks the first H.264 encoder that works: NVIDIA (NVENC), Intel (Quick Sync) or AMD graphics, else the x264 software encoder. With a graphics card's encoder, streaming takes little CPU.
 

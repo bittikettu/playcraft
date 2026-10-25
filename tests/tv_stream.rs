@@ -150,8 +150,49 @@ fn long_stream() {
         })
     };
     let stream = VideoStream::start("ffmpeg", "auto", slot, shared, TvInfo::default());
-    std::thread::sleep(Duration::from_secs(secs));
+    let started = Instant::now();
+    let playlist = stream.dir().join(stream.playlist_name());
+    let mut first: Option<(Instant, f64)> = None;
+    while started.elapsed() < Duration::from_secs(secs) {
+        std::thread::sleep(Duration::from_secs(1));
+        let Ok(text) = std::fs::read_to_string(&playlist) else {
+            continue;
+        };
+        // Seconds of stream made so far: the media sequence (segments dropped) plus those
+        // listed, by their stated lengths.
+        let sequence: f64 = text
+            .lines()
+            .find_map(|l| l.strip_prefix("#EXT-X-MEDIA-SEQUENCE:"))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0.0);
+        let listed: Vec<f64> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("#EXTINF:"))
+            .filter_map(|v| v.trim_end_matches(',').parse().ok())
+            .collect();
+        let made = sequence + listed.iter().sum::<f64>();
+        let (t0, m0) = *first.get_or_insert((Instant::now(), made));
+        let wall = t0.elapsed().as_secs_f64();
+        if wall > 0.0 {
+            println!(
+                "{:5.1} s wall: {:5.1} s of stream ({:.2}x), segments {listed:?}",
+                wall,
+                made - m0,
+                (made - m0) / wall
+            );
+        }
+    }
     assert!(stream.failure().is_none(), "{:?}", stream.failure());
+    // Keep a copy of the stream to look at.
+    if let Ok(keep) = std::env::var("TV_STREAM_KEEP") {
+        std::fs::create_dir_all(&keep).unwrap();
+        for entry in std::fs::read_dir(stream.dir()).unwrap().flatten() {
+            let _ = std::fs::copy(
+                entry.path(),
+                std::path::Path::new(&keep).join(entry.file_name()),
+            );
+        }
+    }
     stream.stop(Duration::from_secs(5));
     feeder.join().unwrap();
 }

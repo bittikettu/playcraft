@@ -12,6 +12,8 @@ pub const FPS: usize = 30;
 /// Audio sample rate of the stream.
 pub const RATE: usize = 48_000;
 pub const PLAYLIST: &str = "live.m3u8";
+/// Length of a stream segment, in seconds.
+pub const SEGMENT_SECS: usize = 2;
 
 /// Encoders tried by `auto`, best first: hardware ones, then software.
 const CANDIDATES: &[&str] = &["h264_nvenc", "h264_qsv", "h264_amf", "libx264", "h264_mf"];
@@ -131,31 +133,35 @@ pub fn arguments(encoder: &str, audio_port: u16, dir: &Path) -> Vec<String> {
     .collect();
     args.extend(tuning(encoder).iter().map(|s| s.to_string()));
     let rest = [
-        // A keyframe every second, so every segment starts with one.
+        // A keyframe at every segment start.
         "-g",
-        &FPS.to_string(),
+        &(FPS * SEGMENT_SECS).to_string(),
         "-force_key_frames",
-        "expr:gte(t,n_forced*1)",
+        &format!("expr:gte(t,n_forced*{SEGMENT_SECS})"),
         "-pix_fmt",
         "yuv420p",
+        // Modest enough for a TV on Wi-Fi.
         "-b:v",
-        "4M",
+        "2500k",
         "-maxrate",
-        "4M",
+        "2500k",
         "-bufsize",
-        "8M",
+        "5000k",
         "-c:a",
         "aac",
         "-b:a",
         "192k",
         "-f",
         "hls",
+        // 2 s segments (TV players re-buffer on shorter ones), 20 s of them listed. The
+        // playlist and segments are written to temporary files and renamed when complete, so
+        // a TV never reads half of one.
         "-hls_time",
-        "1",
+        &SEGMENT_SECS.to_string(),
         "-hls_list_size",
-        "6",
+        "10",
         "-hls_flags",
-        "delete_segments+independent_segments",
+        "delete_segments+independent_segments+temp_file",
         "-hls_segment_filename",
     ];
     args.extend(rest.iter().map(|s| s.to_string()));
@@ -188,12 +194,13 @@ mod tests {
         assert!(joined.contains("-i tcp://127.0.0.1:5555"), "{joined}");
         assert!(joined.contains("-c:v libx264 -preset veryfast -tune zerolatency"));
         assert!(joined.contains("-c:a aac"));
-        assert!(joined.contains("-f hls -hls_time 1"));
+        assert!(joined.contains("-f hls -hls_time 2"), "{joined}");
+        assert!(joined.contains("+temp_file"), "{joined}");
         assert!(args.last().unwrap().ends_with(PLAYLIST));
         // Hardware encoders get their own settings, unknown ones none.
         assert!(arguments("h264_nvenc", 1, dir).contains(&"ll".to_string()));
         let plain = arguments("h264_mf", 1, dir).join(" ");
-        assert!(plain.contains("-c:v h264_mf -g 30"), "{plain}");
+        assert!(plain.contains("-c:v h264_mf -g 60"), "{plain}");
     }
 
     #[test]
