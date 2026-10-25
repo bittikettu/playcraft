@@ -9,7 +9,8 @@ pub mod shared;
 
 use std::time::Duration;
 
-pub use controller::{AudioCommand, AudioConfig, AudioEvent, AudioHandle, StreamInfo};
+pub use controller::{AudioCommand, AudioConfig, AudioEvent, AudioHandle, CaptureSlot, StreamInfo};
+pub use render::Capture;
 
 use crate::model::PlaybackStatus;
 

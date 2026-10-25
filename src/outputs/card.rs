@@ -3,7 +3,7 @@
 //! artist and album in a pixel font, and spectrum bars in the theme's gradient, shaped
 //! differently for every song.
 
-use font8x8::UnicodeFonts;
+use super::pixels::{Canvas, fit, wrap};
 
 /// Width and height of a card, in pixels.
 pub const SIZE: usize = 720;
@@ -39,94 +39,6 @@ pub struct Card {
     pub seed: u64,
 }
 
-struct Canvas {
-    pixels: Vec<u8>,
-}
-
-/// The 8x8 picture of `c` (rows top to bottom, the lowest bit leftmost).
-fn glyph(c: char) -> [u8; 8] {
-    font8x8::BASIC_FONTS
-        .get(c)
-        .or_else(|| font8x8::LATIN_FONTS.get(c))
-        .or_else(|| font8x8::GREEK_FONTS.get(c))
-        .or_else(|| font8x8::BOX_FONTS.get(c))
-        .or_else(|| font8x8::BLOCK_FONTS.get(c))
-        .or_else(|| font8x8::HIRAGANA_FONTS.get(c))
-        .or_else(|| font8x8::BASIC_FONTS.get('?'))
-        .unwrap_or([0; 8])
-}
-
-impl Canvas {
-    fn new(background: [u8; 3]) -> Self {
-        Canvas {
-            pixels: background.repeat(SIZE * SIZE),
-        }
-    }
-
-    fn rect(&mut self, x: usize, y: usize, w: usize, h: usize, color: [u8; 3]) {
-        for row in y.min(SIZE)..(y + h).min(SIZE) {
-            for col in x.min(SIZE)..(x + w).min(SIZE) {
-                let i = (row * SIZE + col) * 3;
-                self.pixels[i..i + 3].copy_from_slice(&color);
-            }
-        }
-    }
-
-    /// Draws `text` with its top left at (`x`, `y`), each font pixel `scale` pixels square.
-    fn text(&mut self, text: &str, x: usize, y: usize, scale: usize, color: [u8; 3]) {
-        for (n, c) in text.chars().enumerate() {
-            let left = x + n * 8 * scale;
-            for (row, bits) in glyph(c).iter().enumerate() {
-                for col in 0..8 {
-                    if bits & (1 << col) != 0 {
-                        self.rect(left + col * scale, y + row * scale, scale, scale, color);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Splits `text` into lines of at most `width` characters, at spaces where it can.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        let mut word: Vec<char> = word.chars().collect();
-        // Words longer than a line are cut.
-        while word.len() > width {
-            if !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-            }
-            lines.push(word.drain(..width).collect());
-        }
-        let word: String = word.into_iter().collect();
-        let len = line.chars().count();
-        if len > 0 && len + 1 + word.chars().count() > width {
-            lines.push(std::mem::take(&mut line));
-        }
-        if !line.is_empty() {
-            line.push(' ');
-        }
-        line.push_str(&word);
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
-}
-
-/// `text` cut to `width` characters, ending in ".." when cut.
-fn fit(text: &str, width: usize) -> String {
-    if text.chars().count() <= width {
-        text.to_string()
-    } else {
-        let mut cut: String = text.chars().take(width.saturating_sub(2)).collect();
-        cut.push_str("..");
-        cut
-    }
-}
-
 /// A pseudo-random number in 0..1 from `seed` and `n` (the same inputs, the same number).
 fn noise(seed: u64, n: u64) -> f32 {
     let mut x = seed ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
@@ -139,7 +51,7 @@ fn noise(seed: u64, n: u64) -> f32 {
 impl Card {
     fn draw(&self) -> Canvas {
         let c = &self.colors;
-        let mut canvas = Canvas::new(c.background);
+        let mut canvas = Canvas::new(SIZE, SIZE, c.background);
         // The frame, with its title in the top edge, like the player's panes.
         let span = SIZE - 2 * MARGIN;
         canvas.rect(MARGIN, MARGIN, span, FRAME, c.frame);
@@ -224,41 +136,8 @@ impl Card {
 
     /// The card as a PNG file.
     pub fn png(&self) -> Vec<u8> {
-        encode_png(&self.draw().pixels)
+        self.draw().png()
     }
-}
-
-fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
-    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    let start = out.len();
-    out.extend_from_slice(kind);
-    out.extend_from_slice(data);
-    let crc = crc32fast::hash(&out[start..]);
-    out.extend_from_slice(&crc.to_be_bytes());
-}
-
-/// A PNG of `SIZE` x `SIZE` RGB pixels.
-fn encode_png(rgb: &[u8]) -> Vec<u8> {
-    let mut raw = Vec::with_capacity((SIZE * 3 + 1) * SIZE);
-    for row in rgb.chunks(SIZE * 3) {
-        // Filter type 0: the row as it is.
-        raw.push(0);
-        raw.extend_from_slice(row);
-    }
-    let mut header = Vec::with_capacity(13);
-    header.extend_from_slice(&(SIZE as u32).to_be_bytes());
-    header.extend_from_slice(&(SIZE as u32).to_be_bytes());
-    // 8 bits per channel, RGB, deflate, no filter method extras, no interlace.
-    header.extend_from_slice(&[8, 2, 0, 0, 0]);
-    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
-    chunk(&mut out, b"IHDR", &header);
-    chunk(
-        &mut out,
-        b"IDAT",
-        &miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6),
-    );
-    chunk(&mut out, b"IEND", &[]);
-    out
 }
 
 #[cfg(test)]
@@ -374,23 +253,9 @@ mod tests {
     }
 
     #[test]
-    fn long_titles_wrap_and_shrink() {
-        assert_eq!(wrap("So What", 12), ["So What"]);
-        assert_eq!(
-            wrap("The Great Gig in the Sky", 12),
-            ["The Great", "Gig in the", "Sky"]
-        );
-        assert_eq!(
-            wrap("Supercalifragilistic", 8),
-            ["Supercal", "ifragili", "stic"]
-        );
-        assert_eq!(fit("Kind of Blue", 6), "Kind..");
-        // Even an absurd title stays inside the card.
+    fn long_titles_stay_inside_the_card() {
         let long = "word ".repeat(80);
         let pixels = decode(&card(&long).png());
         assert_eq!(pixel(&pixels, SIZE - 1, SIZE - 1), COLORS.background);
-        // Letters outside the font show as "?" instead of nothing.
-        assert_eq!(glyph('ä'), font8x8::LATIN_FONTS.get('ä').unwrap());
-        assert_eq!(glyph('漢'), glyph('?'));
     }
 }

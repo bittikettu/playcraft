@@ -19,7 +19,7 @@ use ringbuf::{HeapCons, HeapProd};
 
 use super::decoder::{Decoder, DecoderError};
 use super::output::{self, DeviceFormat, OutputError, StreamFault};
-use super::render::{self, Renderer};
+use super::render::{self, Capture, Renderer};
 use super::resample::Resampler;
 use super::shared::Shared;
 use crate::config::ReplayGainMode;
@@ -129,6 +129,7 @@ pub fn replay_gain_factor(path: &std::path::Path, mode: ReplayGainMode) -> f32 {
 pub struct OpenedSink {
     pub producer: HeapProd<f32>,
     pub tap: HeapCons<f32>,
+    pub capture: Capture,
     pub format: DeviceFormat,
     pub name: String,
     pub keepalive: Box<dyn Any>,
@@ -168,16 +169,22 @@ impl AudioBackend for CpalBackend {
             other => other?,
         };
         let format = choice.format();
-        let (producer, renderer, tap) = render::create(
+        let (producer, renderer, tap, capture) = render::create(
             shared.clone(),
             format.channels,
             ring_frames(buffer_ms, format.sample_rate),
+            format.sample_rate as usize,
         );
         let name = choice.name().to_string();
         let output = choice.start(renderer, faults)?;
         Ok(OpenedSink {
             producer,
             tap,
+            capture: Capture {
+                samples: capture,
+                rate: format.sample_rate,
+                channels: format.channels,
+            },
             format,
             name,
             keepalive: Box::new(output),
@@ -199,10 +206,11 @@ impl AudioBackend for ManualBackend {
         buffer_ms: u32,
         _faults: Sender<StreamFault>,
     ) -> Result<OpenedSink, OutputError> {
-        let (producer, renderer, tap) = render::create(
+        let (producer, renderer, tap, capture) = render::create(
             shared.clone(),
             self.format.channels,
             ring_frames(buffer_ms, self.format.sample_rate),
+            self.format.sample_rate as usize,
         );
         self.renderers
             .send(renderer)
@@ -210,6 +218,11 @@ impl AudioBackend for ManualBackend {
         Ok(OpenedSink {
             producer,
             tap,
+            capture: Capture {
+                samples: capture,
+                rate: self.format.sample_rate,
+                channels: self.format.channels,
+            },
             format: self.format,
             name: "manual".into(),
             keepalive: Box::new(()),
@@ -223,8 +236,12 @@ pub struct AudioHandle {
     events: Receiver<AudioEvent>,
     shared: Arc<Shared>,
     tap: Arc<Mutex<Option<HeapCons<f32>>>>,
+    capture: CaptureSlot,
     thread: Option<JoinHandle<()>>,
 }
+
+/// Where the capture of the current output stream waits to be taken.
+pub type CaptureSlot = Arc<Mutex<Option<Capture>>>;
 
 impl AudioHandle {
     /// Starts the controller with real audio output.
@@ -241,15 +258,17 @@ impl AudioHandle {
         let shared = Arc::new(Shared::default());
         shared.set_volume(config.volume);
         let tap = Arc::new(Mutex::new(None));
+        let capture: CaptureSlot = Arc::new(Mutex::new(None));
         let thread = {
             let shared = shared.clone();
             let tap = tap.clone();
+            let capture = capture.clone();
             thread::Builder::new()
                 .name("audio-controller".into())
                 .spawn(move || {
                     let events = ev_tx.clone();
                     let result = catch_unwind(AssertUnwindSafe(move || {
-                        Controller::new(config, backend, shared, cmd_rx, ev_tx, tap).run();
+                        Controller::new(config, backend, shared, cmd_rx, ev_tx, tap, capture).run();
                     }));
                     if result.is_err() {
                         log::error!("audio controller crashed");
@@ -263,6 +282,7 @@ impl AudioHandle {
             events: ev_rx,
             shared,
             tap,
+            capture,
             thread: Some(thread),
         }
     }
@@ -282,6 +302,12 @@ impl AudioHandle {
     /// Takes the spectrum tap of the current output stream, if a new one is available.
     pub fn take_spectrum_tap(&self) -> Option<HeapCons<f32>> {
         self.tap.try_lock().ok().and_then(|mut slot| slot.take())
+    }
+
+    /// Where each output stream's capture is left for whoever streams the audio (a new one
+    /// after every device change). It only fills while `Shared::set_capture` is on.
+    pub fn capture_slot(&self) -> CaptureSlot {
+        self.capture.clone()
     }
 }
 
@@ -352,6 +378,7 @@ struct Controller {
     commands: Receiver<AudioCommand>,
     events: Sender<AudioEvent>,
     tap_slot: Arc<Mutex<Option<HeapCons<f32>>>>,
+    capture_slot: CaptureSlot,
     fault_tx: Sender<StreamFault>,
     fault_rx: Receiver<StreamFault>,
 
@@ -386,6 +413,7 @@ impl Controller {
         commands: Receiver<AudioCommand>,
         events: Sender<AudioEvent>,
         tap_slot: Arc<Mutex<Option<HeapCons<f32>>>>,
+        capture_slot: CaptureSlot,
     ) -> Self {
         let (fault_tx, fault_rx) = unbounded();
         Controller {
@@ -395,6 +423,7 @@ impl Controller {
             commands,
             events,
             tap_slot,
+            capture_slot,
             fault_tx,
             fault_rx,
             sink: None,
@@ -897,6 +926,9 @@ impl Controller {
         self.shared.set_device_rate(opened.format.sample_rate);
         if let Ok(mut slot) = self.tap_slot.lock() {
             *slot = Some(opened.tap);
+        }
+        if let Ok(mut slot) = self.capture_slot.lock() {
+            *slot = Some(opened.capture);
         }
         self.sink = Some(Sink {
             producer: opened.producer,

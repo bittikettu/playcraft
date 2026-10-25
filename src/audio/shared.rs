@@ -25,6 +25,8 @@ pub struct Shared {
     gain_bits: AtomicU32,
     /// Silences the output (while a network speaker plays) without changing the volume.
     muted: AtomicBool,
+    /// The callback copies what it plays into the capture ring (for streaming to a TV).
+    capture: AtomicBool,
     pub flush_request: AtomicU64,
 
     // Written by the callback.
@@ -47,6 +49,7 @@ impl Default for Shared {
             paused: AtomicBool::new(false),
             gain_bits: AtomicU32::new(1f32.to_bits()),
             muted: AtomicBool::new(false),
+            capture: AtomicBool::new(false),
             flush_request: AtomicU64::new(0),
             flush_ack: AtomicU64::new(0),
             frames_played: AtomicU64::new(0),
@@ -75,6 +78,14 @@ impl Shared {
 
     pub fn muted(&self) -> bool {
         self.muted.load(Ordering::Relaxed)
+    }
+
+    pub fn set_capture(&self, on: bool) {
+        self.capture.store(on, Ordering::Relaxed);
+    }
+
+    pub fn capturing(&self) -> bool {
+        self.capture.load(Ordering::Relaxed)
     }
 
     /// Sets the volume (0.0–1.0). The callback ramps to the matching gain.

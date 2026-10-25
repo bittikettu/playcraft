@@ -9,6 +9,7 @@ pub mod cast;
 pub mod http;
 pub mod link;
 pub mod media;
+pub mod pixels;
 pub mod sonos;
 pub mod sync;
 pub mod wav;

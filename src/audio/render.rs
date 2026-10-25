@@ -2,7 +2,7 @@
 //!
 //! `Renderer::fill` must never block: no allocation, locks or syscalls. It pulls device-format
 //! samples from the ring buffer, applies volume and pause/flush fades, feeds the spectrum tap
-//! and counts played frames.
+//! (and, while a TV stream wants it, the capture) and counts played frames.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -19,9 +19,19 @@ const GAIN_SMOOTHING: f32 = 0.002;
 /// Mono samples kept for the spectrum analyser.
 pub const TAP_CAPACITY: usize = 8192;
 
+/// The audio as it goes to the device, at full level (before the volume), for streaming it
+/// elsewhere. Only filled while `Shared::capturing`.
+pub struct Capture {
+    /// Interleaved samples.
+    pub samples: HeapCons<f32>,
+    pub rate: u32,
+    pub channels: usize,
+}
+
 pub struct Renderer {
     cons: HeapCons<f32>,
     tap: HeapProd<f32>,
+    capture: HeapProd<f32>,
     shared: Arc<Shared>,
     channels: usize,
     gain: f32,
@@ -29,29 +39,34 @@ pub struct Renderer {
     acked_flush: u64,
 }
 
-/// Creates the decoder→callback ring (`capacity_frames` device frames) and the spectrum tap.
-/// Returns the producer for the controller, the renderer for the callback and the tap consumer.
+/// Creates the decoder→callback ring (`capacity_frames` device frames), the spectrum tap and
+/// the capture ring (`capture_frames`). Returns the producer for the controller, the renderer
+/// for the callback, and the tap and capture consumers.
 pub fn create(
     shared: Arc<Shared>,
     channels: usize,
     capacity_frames: usize,
-) -> (HeapProd<f32>, Renderer, HeapCons<f32>) {
+    capture_frames: usize,
+) -> (HeapProd<f32>, Renderer, HeapCons<f32>, HeapCons<f32>) {
     let channels = channels.max(1);
     let (prod, cons) =
         ringbuf::traits::Split::split(HeapRb::<f32>::new(capacity_frames * channels));
     let (tap_prod, tap_cons) = ringbuf::traits::Split::split(HeapRb::<f32>::new(TAP_CAPACITY));
+    let (capture_prod, capture_cons) =
+        ringbuf::traits::Split::split(HeapRb::<f32>::new((capture_frames * channels).max(1)));
     let acked_flush = shared.flush_request.load(Ordering::Acquire);
     shared.flush_ack.store(acked_flush, Ordering::Release);
     let renderer = Renderer {
         cons,
         tap: tap_prod,
+        capture: capture_prod,
         gain: shared.gain(),
         shared,
         channels,
         fade: 0.0,
         acked_flush,
     };
-    (prod, renderer, tap_cons)
+    (prod, renderer, tap_cons, capture_cons)
 }
 
 impl Renderer {
@@ -99,11 +114,16 @@ impl Renderer {
         let target_gain = self.shared.gain();
         let target_fade = if fading_out { 0.0 } else { 1.0 };
         let fade_step = 1.0 / FADE_FRAMES;
+        // The capture gets the fades but not the volume (the TV has its own).
+        let capture = self.shared.capturing();
         for frame in out[..got].chunks_exact_mut(ch) {
             self.gain += (target_gain - self.gain) * GAIN_SMOOTHING;
             self.fade += (target_fade - self.fade).clamp(-fade_step, fade_step);
             let g = self.gain * self.fade;
             for s in frame {
+                if capture {
+                    let _ = self.capture.try_push(*s * self.fade);
+                }
                 *s *= g;
             }
         }
@@ -128,7 +148,7 @@ mod tests {
 
     fn setup(capacity_frames: usize) -> (HeapProd<f32>, Renderer, HeapCons<f32>, Arc<Shared>) {
         let shared = Arc::new(Shared::default());
-        let (prod, r, tap) = create(shared.clone(), 2, capacity_frames);
+        let (prod, r, tap, _capture) = create(shared.clone(), 2, capacity_frames, 1024);
         (prod, r, tap, shared)
     }
 
@@ -229,6 +249,36 @@ mod tests {
         r.fill(&mut out);
         assert_eq!(shared.flush_ack.load(Ordering::Acquire), 1);
         assert_eq!(r.buffered(), 0);
+    }
+
+    #[test]
+    fn capture_gets_full_level_audio_only_when_asked() {
+        let shared = Arc::new(Shared::default());
+        let (mut prod, mut r, _tap, mut capture) = create(shared.clone(), 2, 65536, 4096);
+        warm_up(&mut prod, &mut r);
+        let mut out = vec![0.0; 256];
+        prod.push_iter(std::iter::repeat_n(0.5, 256));
+        r.fill(&mut out);
+        assert_eq!(capture.occupied_len(), 0, "off by default");
+
+        shared.set_capture(true);
+        // Muted while a TV plays: the device gets silence, the capture the music.
+        shared.set_muted(true);
+        prod.push_iter(std::iter::repeat_n(0.5, 8192));
+        let mut out = vec![0.0; 8192];
+        r.fill(&mut out);
+        assert!(out[out.len() - 1].abs() < 0.01, "muted output");
+        let mut got = vec![0.0; 8192];
+        assert_eq!(capture.pop_slice(&mut got), 8192);
+        assert!(got.iter().all(|&s| (s - 0.5).abs() < 1e-6));
+
+        // Paused: nothing is played, so nothing is captured.
+        shared.paused.store(true, Ordering::Relaxed);
+        prod.push_iter(std::iter::repeat_n(0.5, 4096));
+        r.fill(&mut out[..1024]);
+        capture.clear();
+        r.fill(&mut out[..1024]);
+        assert_eq!(capture.occupied_len(), 0);
     }
 
     #[test]
