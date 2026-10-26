@@ -4,7 +4,9 @@
 mod defrag;
 mod file_manager;
 mod help;
+mod horse;
 pub(crate) mod hyperspace;
+mod jukebox;
 mod log;
 mod now_playing;
 mod outputs;
@@ -80,6 +82,8 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
             }
         }
         View::Visualizer => spectrum::draw_fullscreen(f, app, main),
+        View::Jukebox => jukebox::draw(f, app, main),
+        View::Horse => horse::draw(f, app, main),
         View::FileManager if main.width >= 60 => {
             let [files, list] =
                 Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(main);

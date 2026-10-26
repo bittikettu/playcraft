@@ -27,6 +27,17 @@ pub struct Engine {
     history: Vec<u64>,
 }
 
+/// How the list of upcoming tracks goes on after its last entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderEnd {
+    /// More tracks follow (the list was cut at its limit).
+    Continues,
+    /// Playback stops.
+    Stops,
+    /// A new cycle starts in an order that is shuffled only then.
+    Reshuffles,
+}
+
 /// The playlist state an order depends on.
 #[derive(Clone, Copy)]
 pub struct PlayState<'a> {
@@ -181,6 +192,52 @@ impl Engine {
             .iter()
             .copied()
             .find(|&u| playable(st.root, u) && (Some(u) != current || playable_count == 1))
+    }
+
+    /// Up to `limit` tracks that follow `current` in play order, as `next` would pick them,
+    /// without moving the place in the order (repeat-track is ignored). Also tells how the
+    /// list ends when it is shorter than `limit`.
+    pub fn upcoming(
+        &mut self,
+        st: &PlayState<'_>,
+        current: Option<u64>,
+        limit: usize,
+    ) -> (Vec<u64>, OrderEnd) {
+        self.ensure_order(st, false);
+        let mut ok = HashSet::new();
+        st.root
+            .walk(&mut |g| ok.extend(g.tracks.iter().filter(|t| t.is_playable()).map(|t| t.uid)));
+        let start = current
+            .and_then(|c| self.order.iter().position(|&u| u == c))
+            .map_or(0, |p| p + 1);
+        let mut out: Vec<u64> = self.order[start..]
+            .iter()
+            .copied()
+            .filter(|u| ok.contains(u))
+            .take(limit)
+            .collect();
+        if out.len() == limit {
+            return (out, OrderEnd::Continues);
+        }
+        if !matches!(st.repeat, RepeatMode::RepeatAll | RepeatMode::RepeatGroup) {
+            return (out, OrderEnd::Stops);
+        }
+        // A randomised order is shuffled again when the next cycle starts.
+        if self.randomized {
+            return (out, OrderEnd::Reshuffles);
+        }
+        let cycle: Vec<u64> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|u| ok.contains(u))
+            .collect();
+        if cycle.is_empty() {
+            return (out, OrderEnd::Stops);
+        }
+        let missing = limit - out.len();
+        out.extend(cycle.into_iter().cycle().take(missing));
+        (out, OrderEnd::Continues)
     }
 
     /// The track to continue with automatically when `current` ends.
@@ -479,5 +536,57 @@ mod tests {
         }
         assert_eq!(played.len(), 12);
         assert_eq!(played.iter().collect::<HashSet<_>>().len(), 12);
+    }
+
+    #[test]
+    fn upcoming_matches_what_plays_and_moves_nothing() {
+        let mut root = playlist();
+        root.subgroups[0].tracks[1].missing = true;
+        for (mode, repeat) in [
+            (PlayMode::AllGroups, RepeatMode::Off),
+            (PlayMode::AllTracksShuffled, RepeatMode::Off),
+            (PlayMode::AllGroupsShuffled, RepeatMode::RepeatAll),
+        ] {
+            let st = state(&root, mode, repeat);
+            let mut e = Engine::new(Some(7));
+            let first = e.next(&st, None).unwrap();
+            e.started(first);
+            let (ahead, _) = e.upcoming(&st, Some(first), 6);
+            // Peeking twice gives the same answer, and playing follows it.
+            assert_eq!(e.upcoming(&st, Some(first), 6).0, ahead, "{mode:?}");
+            let mut played = Vec::new();
+            let mut cur = first;
+            while played.len() < ahead.len() {
+                cur = e.successor(&st, cur).unwrap();
+                e.started(cur);
+                played.push(cur);
+            }
+            assert_eq!(played, ahead, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn upcoming_tells_how_the_order_ends() {
+        let root = playlist();
+        let b = &root.subgroups[1];
+        let (b2, b3) = (b.tracks[2].uid, b.tracks[3].uid);
+        let mut e = Engine::new(Some(0));
+        let off = state(&root, PlayMode::AllGroups, RepeatMode::Off);
+        assert_eq!(e.upcoming(&off, Some(b2), 5), (vec![b3], OrderEnd::Stops));
+        assert_eq!(e.upcoming(&off, Some(b3), 5), (vec![], OrderEnd::Stops));
+
+        // Repeat-all starts over from the top, as often as the list needs.
+        let all = state(&root, PlayMode::AllGroups, RepeatMode::RepeatAll);
+        let (ahead, end) = e.upcoming(&all, Some(b3), 13);
+        assert_eq!(end, OrderEnd::Continues);
+        assert_eq!(names(&root, &ahead[..3]), ["r0", "r1", "a0"]);
+        assert_eq!(ahead[11], root.tracks[0].uid);
+        assert_eq!(e.successor(&all, b3), Some(ahead[0]));
+
+        // A shuffled cycle is not known before it starts.
+        let shuffled = state(&root, PlayMode::AllTracksShuffled, RepeatMode::RepeatAll);
+        let first = e.next(&shuffled, None).unwrap();
+        let (ahead, end) = e.upcoming(&shuffled, Some(first), 20);
+        assert_eq!((ahead.len(), end), (10, OrderEnd::Reshuffles));
     }
 }

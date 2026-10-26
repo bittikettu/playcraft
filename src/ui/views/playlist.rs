@@ -17,15 +17,23 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App, area: Rect, focused: bool) {
         (Action::NewGroup, "Add Group"),
         (Action::LoadPlaylist, "Load"),
         (Action::Help, "Help"),
+        (Action::Jukebox, "Jukebox"),
+        (Action::Horse, "Horse"),
     ];
     let mut title = vec![Span::styled(" ", theme.border)];
     if focused {
+        // Hints that do not fit in the top border are left out.
+        let mut room = (area.width as usize).saturating_sub(3);
         for (action, label) in hints {
-            title.push(Span::styled(
-                format!("[{}]", km.hint(Context::Playlist, action)),
-                theme.key,
-            ));
-            title.push(Span::styled(format!(" {label}  "), theme.title));
+            let key = format!("[{}]", km.hint(Context::Playlist, action));
+            let label = format!(" {label}  ");
+            let width = key.len() + label.len();
+            if width > room {
+                continue;
+            }
+            room -= width;
+            title.push(Span::styled(key, theme.key));
+            title.push(Span::styled(label, theme.title));
         }
     } else {
         title.push(Span::styled("Playlist ", theme.title));

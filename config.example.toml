@@ -86,7 +86,7 @@ tv_encoder = "auto"
 # move_up = ["K"]
 # move_down = ["J"]
 # load_playlist = ["F3"]
-# save_playlist = ["F4"]
+# save_playlist = ["Ctrl+s", "S"]
 # search = ["/"]
 # help = ["?"]
 # show_log = ["L"]
@@ -96,6 +96,8 @@ tv_encoder = "auto"
 # spectrum_layout = ["w"]
 # visualizer_style = ["v"]
 # progress_style = ["p"]
+# jukebox = ["F4"]
+# amazing_horse = ["F5"]
 # close = ["Esc"]
 # quit = ["q", "Ctrl+c"]
 

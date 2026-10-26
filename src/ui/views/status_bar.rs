@@ -80,6 +80,28 @@ pub fn draw(f: &mut Frame<'_>, app: &App, area: Rect, compact: bool) {
             (Action::ThemeSelector, "Theme"),
             (Action::Quit, "Quit"),
         ],
+        View::Jukebox => &[
+            (Action::Jukebox, "Back"),
+            (Action::Activate, "Play now"),
+            (Action::Enqueue, "Queue"),
+            (Action::PlayPause, "Play/Pause"),
+            (Action::NextTrack, "Next"),
+            (Action::PrevTrack, "Prev"),
+            (Action::VolumeUp, "Vol"),
+            (Action::Horse, "Horse"),
+            (Action::Quit, "Quit"),
+        ],
+        View::Horse => &[
+            (Action::Horse, "Back"),
+            (Action::Activate, "Play now"),
+            (Action::Enqueue, "Queue"),
+            (Action::PlayPause, "Play/Pause"),
+            (Action::NextTrack, "Next"),
+            (Action::PrevTrack, "Prev"),
+            (Action::VolumeUp, "Vol"),
+            (Action::Jukebox, "Jukebox"),
+            (Action::Quit, "Quit"),
+        ],
     };
     let mut spans = Vec::new();
     let mut used = 0;

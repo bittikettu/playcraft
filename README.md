@@ -31,6 +31,18 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
   - Queued tracks show their place (`Q1`, `Q2`…) in the playlist, and Now Playing shows what comes next.
   - When the queue runs out, normal order resumes from where it was before the queue.
   - The queue is kept between sessions.
+- **Jukebox view (F4):** the songs coming up, shown as the title strips of a jukebox. It is drawn with two 24-bit pixels per cell, under an arched cabinet with rainbow neon tubes that pulse with the bass.
+  - Each strip shows the song's selection code (`A1` is the playlist's first song, `B1` its eleventh), its title and artist, and how long until it starts. The times count down from what is left of the playing song.
+  - A glass panel describes the next song: its album, length, genre and bitrate, and whether you queued it or it is next in play order.
+  - The list is what will really play: the queue first, then the play order. It says whether the music stops after the last song, starts over, or is shuffled again.
+  - Upcoming songs stand in a rack as records, each with its own label colour. The playing record spins on the turntable, and the tonearm moves inward as the song plays.
+  - When the song changes, the arm swings away and the record goes back into the rack. The next record tips over onto the turntable, and the arm swings back.
+- **"Look at my horse, my horse is amazing" view (F5):** the same songs as a ride, after Weebl's cartoon song.
+  - A white horse with a rainbow mane gallops along a country track to the beat, with the same beat detection as HYPERSPACE. It takes one stride per beat (one per two beats in fast music) and lands on the beat, and sparkles flash with each one. The tempo shows next to the time. Without a beat, it slows down to a walk.
+  - There is a rainbow, a sun, drifting clouds and a white fence.
+  - The songs coming up are signposts with their selection codes. Each stands as far along the track as the time until its song starts, so the next sign reaches the horse just as its song begins.
+  - The horse says in a speech bubble what is next and when it starts. A board below lists the road ahead, with when each song starts.
+  - When the song changes, the horse turns into a plane, loops the loop over the meadow, and lands as a horse again.
 - **File manager:**
   - drive list on Windows, hidden-file filter;
   - select by glob (`*.flac`) or regex (`re:^0[1-5]`);
@@ -118,7 +130,7 @@ mp3blaster-rs [OPTIONS] [PATHS]...
 ```
 
 - **Several paths:** files and folders go into the root group, and each playlist becomes a group of its own.
-- **One playlist path:** that playlist is opened directly, and F4 saves back to it.
+- **One playlist path:** that playlist is opened directly, and Ctrl+S saves back to it.
 - **No paths:** the previous session is restored.
 
 ## Keys
@@ -135,8 +147,10 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 | Page up / down | PgUp / PgDn | Ctrl+u / Ctrl+d |
 | File manager (add files) | F1 | `a` |
 | Create group | F2 | `g` |
-| Load / save playlist | F3 / F4 | |
+| Load / save playlist | F3 / Ctrl+S | `S` (save) |
 | Queue track or group / show queue / clear queue | Ins | `e` / `u` / `X` |
+| Jukebox: what plays next and when each song starts | F4 | |
+| "Look at my horse, my horse is amazing": the same, on horseback | F5 | |
 | Search / filter | `/` | `/` |
 | Volume down / up | `<` / `>` | `-` / `+` (also `=`) |
 | Help / message log | `?` / `L` | |
@@ -157,6 +171,14 @@ All keys can be remapped (see *Configuration*). Press `?` in the player to see t
 - Enter plays the selected track now, and `K`/`J` move it.
 - `d` removes a track, `X` clears the queue, and Esc closes the list.
 - Playback keys keep working while the list is open.
+
+**Jukebox** (F4) **and the horse** (F5):
+- F4 and F5 switch between the two. They share the list of songs and the selection.
+- Up and Down move along the title strips (or the horse's board) in play order, and PgUp/PgDn move a whole board.
+- Enter plays the selected song now. `e` or Ins queues it, or takes it out of the queue.
+- On queued songs, `d` takes them out of the queue and `K`/`J` move them.
+- Playback keys keep working. Esc, or the view's own key again, goes back to where you came from.
+- Small terminals get a plain list instead of the machine, and with the ASCII charset it is drawn with one pixel per cell.
 
 **File manager:**
 - Enter, `l` or Right opens a folder (or adds a file); Backspace, `h` or Left goes up. Above `C:\`, the drive list appears.
@@ -348,12 +370,14 @@ library_dirs = ["D:/Music", "E:/Archive"]   # folders to search; empty = the mus
 - **Groups:** groups gain a `shuffle` flag, and the original MP3Blaster play modes are added.
 - **Themes:** the default is Dracula instead of `classic_blue`. The spec's four themes are kept, five VS Code themes are added, and there is an in-app picker (`t`).
 - **Additions:**
-  - keys: Enter, Backspace, `?`, F3/F4, `L`, `t`, `f`, `w`, `v`, `p`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, `o`, and the play queue (`e`/Ins, `u`, `X`);
+  - keys: Enter, Backspace, `?`, F3, F4 (the jukebox), F5 (the horse), Ctrl+S/`S`, `L`, `t`, `f`, `w`, `v`, `p`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, `o`, and the play queue (`e`/Ins, `u`, `X`);
   - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, `[ui] progress_style`, and the `[mcp]` and `[outputs]` sections;
   - AI control through MCP (`--mcp`), with a play queue and music folder search;
   - playing on Sonos speakers and Google Cast devices (`o`, `--list-speakers`), with the player's pictures on TVs (needs ffmpeg);
   - the `[keybindings.file_manager]` section.
-- **Key conflict:** the spec's UI mockup shows F1 as Help, but its key table says F1 opens the file manager. The key table wins, so Help is `?`.
+- **Key conflicts:**
+  - The spec's UI mockup shows F1 as Help, but its key table says F1 opens the file manager. The key table wins, so Help is `?`.
+  - The spec's key table makes F4 save the playlist. F4 opens the jukebox instead, and Ctrl+S or `S` saves.
 
 ## Development
 

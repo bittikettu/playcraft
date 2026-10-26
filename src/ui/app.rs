@@ -25,6 +25,7 @@ use crate::spectrum::SpectrumAnalyzer;
 
 use super::cast::{Cast, Devices, OutputSettings};
 use super::file_manager::{FileManager, FmMode};
+use super::jukebox::JukeboxState;
 use super::keymap::{Action, Context, KeyBinding, Keymap};
 use super::prompt::{Prompt, PromptKind, PromptResult};
 use super::theme::{Symbols, Theme};
@@ -55,6 +56,17 @@ pub enum View {
     FileManager,
     /// Fullscreen spectrum analyser.
     Visualizer,
+    /// The jukebox: the songs coming up and a record changer.
+    Jukebox,
+    /// "Look at my horse, my horse is amazing": the songs coming up, on horseback.
+    Horse,
+}
+
+impl View {
+    /// The jukebox and the horse show the songs coming up, and share their keys.
+    pub fn shows_lineup(self) -> bool {
+        matches!(self, View::Jukebox | View::Horse)
+    }
 }
 
 /// How the spectrum is drawn in the wide strip and the fullscreen view.
@@ -223,6 +235,9 @@ pub struct App {
     pub progress_fx: ProgressFx,
     /// View to return to when the fullscreen visualizer closes.
     pub(crate) view_before_visualizer: View,
+    pub jukebox: JukeboxState,
+    /// The amazing horse's moving parts.
+    pub horse: crate::horse::Horse,
     pub spectrum: SpectrumAnalyzer,
     last_spectrum_update: Instant,
     pub replaygain: ReplayGainMode,
@@ -296,6 +311,8 @@ impl App {
             progress_style: ProgressStyle::PacMan,
             progress_fx: ProgressFx::default(),
             view_before_visualizer: View::Playlist,
+            jukebox: JukeboxState::default(),
+            horse: crate::horse::Horse::default(),
             spectrum: SpectrumAnalyzer::new(),
             last_spectrum_update: Instant::now(),
             replaygain: ReplayGainMode::Off,
@@ -331,9 +348,11 @@ impl App {
         self.audio.shared().status()
     }
 
-    /// Whether the screen changes on its own (progress bar, spectrum).
+    /// Whether the screen changes on its own (progress bar, spectrum, record changes).
     pub fn is_animating(&self) -> bool {
         self.status() == PlaybackStatus::Playing
+            || (self.view == View::Jukebox && self.jukebox.scene.is_active())
+            || (self.view == View::Horse && self.horse.is_active())
             || (self.spectrum_visible()
                 && (self.spectrum.is_active()
                     || self.rain.is_active()
@@ -497,8 +516,14 @@ impl App {
         let dt = self.last_spectrum_update.elapsed();
         self.last_spectrum_update = Instant::now();
         let reacts = self.progress_style.reacts();
-        if self.spectrum_visible() || reacts {
+        // The jukebox's neon pulses with the bass, and the horse gallops harder.
+        if self.spectrum_visible() || reacts || self.view.shows_lineup() {
             self.spectrum.update(dt);
+        }
+        match self.view {
+            View::Jukebox => self.update_jukebox(dt),
+            View::Horse => self.update_horse(dt),
+            _ => {}
         }
         if reacts {
             let shared = self.audio.shared();
@@ -568,13 +593,13 @@ impl App {
         }))
     }
 
-    /// Frames per second for the current view. The HYPERSPACE framebuffer sends a lot of
-    /// colour data to the terminal, so it is capped at 30.
+    /// Frames per second for the current view. The HYPERSPACE framebuffer, the jukebox and
+    /// the horse send a lot of colour data to the terminal, so they are capped at 30.
     pub fn effective_fps(&self) -> u32 {
         let hyperspace_on_screen = self.visualizer == Visualizer::Hyperspace
             && (self.view == View::Visualizer
                 || (self.view == View::Playlist && self.spectrum_layout == SpectrumLayout::Wide));
-        if hyperspace_on_screen {
+        if hyperspace_on_screen || self.view.shows_lineup() {
             self.fps.min(30)
         } else {
             self.fps
@@ -605,13 +630,17 @@ impl App {
         match self.view {
             View::Playlist => Context::Playlist,
             View::FileManager => Context::FileManager,
-            View::Visualizer => Context::Playlist,
+            View::Visualizer | View::Jukebox | View::Horse => Context::Playlist,
         }
     }
 
     /// Whether a spectrum is on screen (so the analyser needs updating).
     pub fn spectrum_visible(&self) -> bool {
-        self.view == View::Visualizer || self.spectrum_layout != SpectrumLayout::Off
+        match self.view {
+            View::Visualizer => true,
+            View::Jukebox | View::Horse => false,
+            View::Playlist | View::FileManager => self.spectrum_layout != SpectrumLayout::Off,
+        }
     }
 
     pub(crate) fn toggle_visualizer(&mut self) {
@@ -704,6 +733,9 @@ impl App {
         if self.view == View::FileManager && self.on_file_manager_action(action) {
             return;
         }
+        if self.view.shows_lineup() && self.on_lineup_action(action) {
+            return;
+        }
         if self.view == View::Visualizer
             && matches!(action, Action::Close | Action::Back | Action::Activate)
         {
@@ -769,6 +801,8 @@ impl App {
             Action::ThemeSelector => self.open_theme_selector(),
             Action::OutputSelector => self.open_outputs(),
             Action::SpectrumFullscreen => self.toggle_visualizer(),
+            Action::Jukebox => self.toggle_lineup_view(View::Jukebox),
+            Action::Horse => self.toggle_lineup_view(View::Horse),
             Action::VisualizerStyle => {
                 self.visualizer = self.visualizer.toggle();
                 self.banner(

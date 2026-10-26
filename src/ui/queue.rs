@@ -10,20 +10,10 @@ impl App {
     pub(crate) fn enqueue_at_cursor(&mut self) {
         match self.cursor_row() {
             Some(Row::Track(i)) => {
-                let Some(track) = self.current_group().tracks.get(i) else {
-                    return;
-                };
-                let (uid, name, playable) = (track.uid, track.display_name(), track.is_playable());
-                if self.take_from_queue(uid) {
-                    self.banner(BannerLevel::Info, format!("Unqueued: {name}"));
-                } else if !playable {
-                    self.banner(BannerLevel::Warning, format!("Cannot queue: {name}"));
-                    return;
-                } else {
-                    self.queue.push(uid);
-                    let n = self.queue.len();
-                    self.banner(BannerLevel::Info, format!("Queued #{n}: {name}"));
+                if let Some(uid) = self.current_group().tracks.get(i).map(|t| t.uid) {
+                    self.toggle_queued(uid);
                 }
+                return;
             }
             Some(Row::Group(i)) => {
                 let group = &self.current_group().subgroups[i];
@@ -41,6 +31,25 @@ impl App {
                 );
             }
             None => return,
+        }
+        self.requeue();
+    }
+
+    /// Queues the track `uid`, or takes it out of the queue if it is already queued.
+    pub(crate) fn toggle_queued(&mut self, uid: u64) {
+        let Some(track) = self.root.track_by_uid(uid) else {
+            return;
+        };
+        let (name, playable) = (track.display_name(), track.is_playable());
+        if self.take_from_queue(uid) {
+            self.banner(BannerLevel::Info, format!("Unqueued: {name}"));
+        } else if !playable {
+            self.banner(BannerLevel::Warning, format!("Cannot queue: {name}"));
+            return;
+        } else {
+            self.queue.push(uid);
+            let n = self.queue.len();
+            self.banner(BannerLevel::Info, format!("Queued #{n}: {name}"));
         }
         self.requeue();
     }

@@ -5,6 +5,7 @@ mod backend;
 mod cast;
 mod editing;
 pub mod file_manager;
+pub mod jukebox;
 pub mod keymap;
 mod persistence;
 mod playback;
@@ -456,8 +457,8 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut app = test_app(sample_root());
         app.fm = file_manager::FileManager::new(dir.path().to_path_buf());
-        // F4, type a relative name without extension: saved as .blst in the browsed folder.
-        type_keys(&mut app, &["F4", "Ctrl+u", "m", "i", "x", "Enter"]);
+        // Ctrl+S, type a relative name without extension: saved as .blst in the browsed folder.
+        type_keys(&mut app, &["Ctrl+s", "Ctrl+u", "m", "i", "x", "Enter"]);
         let saved = dir.path().join("mix.blst");
         assert!(saved.exists(), "banner: {:?}", app.banner);
 
@@ -466,7 +467,7 @@ pub(crate) mod tests {
         type_keys(
             &mut app,
             &[
-                "F4", "Ctrl+u", "o", "t", "h", "e", "r", ".", "m", "3", "u", "8", "Enter",
+                "S", "Ctrl+u", "o", "t", "h", "e", "r", ".", "m", "3", "u", "8", "Enter",
             ],
         );
         assert!(app.prompt.as_ref().is_some_and(|p| p.is_confirm()));

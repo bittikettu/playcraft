@@ -62,6 +62,10 @@ pub enum Action {
     SpectrumLayout,
     VisualizerStyle,
     ProgressStyle,
+    /// The jukebox view: the songs coming up, when each starts, and a record changer.
+    Jukebox,
+    /// The same as a ride: "look at my horse, my horse is amazing".
+    Horse,
     Close,
     #[cfg(debug_assertions)]
     DebugPanic,
@@ -114,6 +118,8 @@ impl Action {
         Action::SpectrumLayout,
         Action::VisualizerStyle,
         Action::ProgressStyle,
+        Action::Jukebox,
+        Action::Horse,
         Action::Close,
         Action::Quit,
     ];
@@ -167,6 +173,8 @@ impl Action {
             Action::SpectrumLayout => "spectrum_layout",
             Action::VisualizerStyle => "visualizer_style",
             Action::ProgressStyle => "progress_style",
+            Action::Jukebox => "jukebox",
+            Action::Horse => "amazing_horse",
             Action::Close => "close",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "debug_panic",
@@ -227,6 +235,8 @@ impl Action {
             Action::SpectrumLayout => "Spectrum: wide / in panel / off",
             Action::VisualizerStyle => "Visualizer: bars / Matrix / defragmenter / HYPERSPACE",
             Action::ProgressStyle => "Progress bar: Pac-Man / Nyan cat / waveform / classic",
+            Action::Jukebox => "Jukebox: songs coming up, when each starts (again: back)",
+            Action::Horse => "Look at my horse, my horse is amazing: the songs ahead, on horseback",
             Action::Close => "Close view / cancel",
             #[cfg(debug_assertions)]
             Action::DebugPanic => "Crash on purpose (debug builds)",
@@ -408,7 +418,9 @@ impl Default for Keymap {
             (C::Global, FileManager, &["F1", "a"]),
             (C::Global, NewGroup, &["F2", "g"]),
             (C::Global, LoadPlaylist, &["F3"]),
-            (C::Global, SavePlaylist, &["F4"]),
+            (C::Global, SavePlaylist, &["Ctrl+s", "S"]),
+            (C::Global, Jukebox, &["F4"]),
+            (C::Global, Horse, &["F5"]),
             (C::Global, Help, &["?"]),
             (C::Global, Search, &["/"]),
             (C::Global, CyclePlayMode, &["m"]),
@@ -681,6 +693,9 @@ mod tests {
             ("F1", Action::FileManager),
             ("F2", Action::NewGroup),
             ("g", Action::NewGroup),
+            ("F4", Action::Jukebox),
+            ("F5", Action::Horse),
+            ("Ctrl+s", Action::SavePlaylist),
             ("Ctrl+d", Action::PageDown),
             ("q", Action::Quit),
         ] {
