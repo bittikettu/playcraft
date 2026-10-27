@@ -63,6 +63,8 @@ pub struct Ui {
     pub hyperspace_quality: String,
     /// `pacman`, `nyan`, `waveform` or `classic`.
     pub progress_style: String,
+    /// The horse view (F5) gallops to the beat of the music, instead of at a steady pace.
+    pub horse_beat_match: bool,
     pub color_theme: String,
     pub charset: String,
     pub show_hidden: bool,
@@ -77,6 +79,7 @@ impl Default for Ui {
             visualizer: "bars".into(),
             hyperspace_quality: "balanced".into(),
             progress_style: "pacman".into(),
+            horse_beat_match: false,
             color_theme: DEFAULT_THEME.into(),
             charset: "unicode".into(),
             show_hidden: false,
@@ -457,6 +460,8 @@ pub fn default_file_text() -> String {
          # Progress bar: pacman (chomping to the power pellet), nyan (a cat with a rainbow),\n\
          # waveform (the song's loudness as it plays) or classic; p cycles them\n\
          progress_style = \"pacman\"\n\
+         # The horse (F5): gallop to the beat of the music (true) or at a steady fast pace\n\
+         horse_beat_match = false\n\
          # THEME_LIST\n\
          color_theme = \"DEFAULT_THEME\"\n\
          # unicode or ascii (use ascii in the legacy console with raster fonts)\n\

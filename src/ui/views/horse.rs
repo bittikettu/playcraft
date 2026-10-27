@@ -487,6 +487,16 @@ mod tests {
     }
 
     #[test]
+    fn the_config_turns_beat_matching_on() {
+        let mut app = test_app(tracks());
+        assert!(!app.horse.beat_match, "off by default");
+        let (cfg, warnings) = crate::config::parse("[ui]\nhorse_beat_match = true\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(app.apply_config(&cfg).is_empty());
+        assert!(app.horse.beat_match);
+    }
+
+    #[test]
     fn stopped_and_empty() {
         let mut app = test_app(tracks());
         app.on_action(Action::Horse);

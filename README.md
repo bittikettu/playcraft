@@ -38,7 +38,7 @@ Space:Play/Pause  s:Stop  n:Next  b:Prev  Right:Seek  +:Vol  Enter:Play  ?:Help 
   - Upcoming songs stand in a rack as records, each with its own label colour. The playing record spins on the turntable, and the tonearm moves inward as the song plays.
   - When the song changes, the arm swings away and the record goes back into the rack. The next record tips over onto the turntable, and the arm swings back.
 - **"Look at my horse, my horse is amazing" view (F5):** the same songs as a ride, after Weebl's cartoon song.
-  - A white horse with a rainbow mane gallops along a country track to the beat, with the same beat detection as HYPERSPACE. It takes one stride per beat (one per two beats in fast music) and lands on the beat, and sparkles flash with each one. The tempo shows next to the time. Without a beat, it slows down to a walk.
+  - A white horse with a rainbow mane gallops fast along a country track. With `horse_beat_match = true` in `[ui]`, it gallops to the beat instead, with the same beat detection as HYPERSPACE. It then takes one stride per beat (one per two beats in fast music), with the pace set from the second beat. Its legs follow the classic twelve-phase gallop: the hind hooves land one after the other (the first on the beat), then the front ones, then all four fold under the body in mid-air. Hooves stay planted on the track while they are down. With each landing (or each beat) it kicks up dust and tosses its mane while sparkles flash. When it matches the beat, the tempo shows next to the time, and about three beats after the beat stops it slows down to a walk.
   - There is a rainbow, a sun, drifting clouds and a white fence.
   - The songs coming up are signposts with their selection codes. Each stands as far along the track as the time until its song starts, so the next sign reaches the horse just as its song begins.
   - The horse says in a speech bubble what is next and when it starts. A board below lists the road ahead, with when each song starts.
@@ -218,6 +218,7 @@ spectrum_layout = "wide"    # wide (full-width strip) or pane (inside Now Playin
 visualizer = "hyperspace"   # bars, matrix (rain of the file's bytes), defrag or hyperspace
 hyperspace_quality = "balanced"  # high, balanced or fast (fast suits slow terminals)
 progress_style = "pacman"   # or nyan, waveform, classic
+horse_beat_match = true     # the horse (F5) gallops to the beat (default: false, a steady gallop)
 
 [keybindings]
 play_pause = ["Space", "c"]
@@ -371,7 +372,7 @@ library_dirs = ["D:/Music", "E:/Archive"]   # folders to search; empty = the mus
 - **Themes:** the default is Dracula instead of `classic_blue`. The spec's four themes are kept, five VS Code themes are added, and there is an in-app picker (`t`).
 - **Additions:**
   - keys: Enter, Backspace, `?`, F3, F4 (the jukebox), F5 (the horse), Ctrl+S/`S`, `L`, `t`, `f`, `w`, `v`, `p`, `m`, `r`, `z`, `R`, `d`, `K`/`J`, `o`, and the play queue (`e`/Ins, `u`, `X`);
-  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, `[ui] progress_style`, and the `[mcp]` and `[outputs]` sections;
+  - config: `[general] replaygain`, `[audio] output_device`, `[ui] show_hidden`, `[ui] spectrum_layout`, `[ui] visualizer`, `[ui] progress_style`, `[ui] horse_beat_match`, and the `[mcp]` and `[outputs]` sections;
   - AI control through MCP (`--mcp`), with a play queue and music folder search;
   - playing on Sonos speakers and Google Cast devices (`o`, `--list-speakers`), with the player's pictures on TVs (needs ffmpeg);
   - the `[keybindings.file_manager]` section.

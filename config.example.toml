@@ -27,6 +27,8 @@ hyperspace_quality = "balanced"
 # Progress bar: pacman (chomping to the power pellet), nyan (a cat with a rainbow),
 # waveform (the song's loudness as it plays) or classic; p cycles them
 progress_style = "pacman"
+# The horse (F5): gallop to the beat of the music (true) or at a steady fast pace
+horse_beat_match = false
 # dracula, tokyo_night, one_dark, monokai, nord, catppuccin, gruvbox, classic_blue, monochrome (or press t in the player)
 color_theme = "dracula"
 # unicode or ascii (use ascii in the legacy console with raster fonts)

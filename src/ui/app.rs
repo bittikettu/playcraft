@@ -411,6 +411,7 @@ impl App {
         };
         self.progress_style =
             ProgressStyle::from_name(&config.ui.progress_style).unwrap_or(ProgressStyle::PacMan);
+        self.horse.beat_match = config.ui.horse_beat_match;
         if let Some(tuning) = crate::hyperspace::Tuning::preset(&config.ui.hyperspace_quality) {
             self.hyperspace.tuning = tuning;
         }

@@ -1,7 +1,8 @@
 //! "Look at my horse, my horse is amazing" (F5), after Weebl's cartoon song: the songs
-//! ahead, as a ride. A white horse with a rainbow mane gallops along a country track to
-//! the beat, under a rainbow: one stride per beat, landing on it (the beat detector is
-//! HYPERSPACE's). Without a beat it slows to a walk. The songs coming up are signposts on the track,
+//! ahead, as a ride. A white horse with a rainbow mane gallops fast along a country track,
+//! under a rainbow. With beat matching on (`[ui] horse_beat_match`), it gallops to the
+//! beat instead: one stride per beat, landing on it (the beat detector is HYPERSPACE's),
+//! and slows to a walk without one. The songs coming up are signposts on the track,
 //! placed by the time until they start, so the next one reaches the horse just as its
 //! song begins. Then the horse turns into a plane, loops the loop over the meadow and
 //! lands as a horse again.
@@ -48,6 +49,7 @@ const COAT_FAR: Rgb = [0xb9, 0xb2, 0xa5];
 const HOOF: Rgb = [0x4b, 0x3c, 0x33];
 const EYE: Rgb = [0x1c, 0x14, 0x10];
 const MUZZLE: Rgb = [0xea, 0xc4, 0xbb];
+const DUST: Rgb = [0xe6, 0xcf, 0xa2];
 const OUTLINE: Rgb = [0x3b, 0x2c, 0x22];
 /// The wooden frame's top, left and bottom-right edges.
 const WOOD_FRAME: [Rgb; 3] = [[0xa0, 0x70, 0x3e], [0xb4, 0x80, 0x4a], [0x5a, 0x38, 0x1c]];
@@ -58,15 +60,22 @@ pub const TRICK_SECS: f32 = 3.4;
 const POOF_OUT: (f32, f32) = (0.0, 0.1);
 const FLIGHT: (f32, f32) = (0.08, 0.92);
 const POOF_IN: (f32, f32) = (0.9, 1.0);
-/// Strides per second: at a gallop before the tempo is known, and at a walk when no beat
-/// is heard.
+/// Strides per second: the steady gallop without beat matching (twelve frames a stride
+/// at 30 frames a second, like the twelve-phase chart), a gallop before the tempo is
+/// known, and a walk when no beat is heard.
+const STEADY: f32 = 2.5;
 const GALLOP: f32 = 1.9;
 const WALK: f32 = 0.6;
 /// The pace a tempo is folded into (strides per second): one stride per beat, or per two
 /// beats in fast music.
 const PACE: (f32, f32) = (1.0, 2.4);
-/// Without a beat for this long the horse slows to a walk.
-const BEAT_LOST_SECS: f32 = 2.0;
+/// Without a beat for this many beats (and at least `BEAT_LOST_MIN` seconds) the horse
+/// slows to a walk.
+const BEATS_LOST: f32 = 3.0;
+const BEAT_LOST_MIN: f32 = 1.2;
+/// The beat detector notices a kick about this long after it is heard: its FFT window
+/// is 85 ms, so a kick shows fully half way in, and a frame passes before the check.
+const DETECT_LAG: f32 = 0.045;
 /// Seconds ahead at which a signpost stands half way from the horse to the right edge.
 const HALF_WAY: f32 = 240.0;
 
@@ -218,6 +227,8 @@ pub struct Scene<'a> {
 /// The moving parts: the gallop, the ground going by, and the plane trick.
 #[derive(Debug, Default)]
 pub struct Horse {
+    /// Gallop to the beat of the music rather than at a steady pace.
+    pub beat_match: bool,
     /// Seconds since the scene started (wraps after an hour).
     clock: f32,
     /// Gallop: where in its stride the horse is (in strides; it lands at 0) and how fast it
@@ -234,6 +245,11 @@ pub struct Horse {
     last_beat: Option<f32>,
     beat_count: u64,
     catch_up: f32,
+    /// Seconds between the last two beats: the tempo until the detector has its own.
+    gap: Option<f32>,
+    /// 1 on a beat (or, without beat matching, on landing), fading fast: the horse kicks up
+    /// dust and tosses its mane.
+    kick: f32,
     song: Option<u64>,
     /// Progress (0–1) of the plane trick.
     trick: Option<f32>,
@@ -247,7 +263,8 @@ impl Horse {
     }
 
     /// Advances by `dt` seconds. A new `song` starts the plane trick. While `playing`, the
-    /// horse gallops to the beats in the `bass` loudness (0–1), or walks without them.
+    /// horse gallops; with beat matching, to the beats in the `bass` loudness (0–1), and
+    /// it walks when there are none.
     pub fn update(&mut self, dt: f32, song: Option<u64>, playing: bool, bass: f32) {
         let dt = dt.clamp(0.0, 0.25);
         self.clock = (self.clock + dt) % 3600.0;
@@ -266,40 +283,67 @@ impl Horse {
                 self.trick = None;
             }
         }
-        if playing && self.beats.update(self.time, dt, bass) {
+        self.kick *= (-dt * 7.0).exp();
+        if playing && self.beat_match && self.beats.update(self.time, dt, bass) {
+            if let Some(gap) = self.last_beat.map(|t| self.time - t)
+                && (0.25..2.0).contains(&gap)
+            {
+                self.gap = Some(gap);
+            }
             self.last_beat = Some(self.time);
             self.beat_count += 1;
+            self.kick = 1.0;
             self.catch_up = -self.off_beat();
         }
-        let target = match (playing, self.hears_beat()) {
-            (false, _) => 0.0,
-            (true, false) => WALK,
-            (true, true) => self.tempo().unwrap_or(GALLOP),
+        let target = match (playing, self.beat_match, self.hears_beat()) {
+            (false, ..) => 0.0,
+            (true, false, _) => STEADY,
+            (true, true, false) => WALK,
+            (true, true, true) => self.tempo().unwrap_or(GALLOP),
         };
-        self.speed += (target - self.speed) * (1.0 - (-dt * 3.0).exp());
+        self.speed += (target - self.speed) * (1.0 - (-dt * 6.0).exp());
         if target == 0.0 && self.speed < 0.02 {
             self.speed = 0.0;
         }
-        // Catch up with the beat over a moment, rather than jump; never running backwards.
-        let nudge = (self.catch_up * (1.0 - (-dt * 6.0).exp())).max(-0.6 * self.speed * dt);
+        // Catch up with the beat quickly, rather than jump; never running backwards.
+        let nudge = (self.catch_up * (1.0 - (-dt * 12.0).exp())).max(-0.7 * self.speed * dt);
         self.catch_up -= nudge;
+        let before = self.stride;
         self.stride = (self.stride + self.speed * dt + nudge).rem_euclid(1.0);
-        self.travelled = (self.travelled + self.speed * dt) % 10_000.0;
+        // Without beat matching, each landing kicks instead of each beat.
+        if !self.beat_match && self.speed > 0.0 && self.stride < before {
+            self.beat_count += 1;
+            self.kick = 1.0;
+        }
+        // The track goes by as fast as the hooves on it push back (less at a walk).
+        self.travelled = (self.travelled + self.speed * self.amp() * dt) % 10_000.0;
+    }
+
+    /// Seconds between beats, as far as is known.
+    fn beat_secs(&self) -> Option<f32> {
+        self.beats.bpm().map(|bpm| 60.0 / bpm).or(self.gap)
     }
 
     fn hears_beat(&self) -> bool {
-        self.last_beat
-            .is_some_and(|t| self.time - t < BEAT_LOST_SECS)
+        let lost = self
+            .beat_secs()
+            .map_or(BEAT_LOST_MIN, |secs| (secs * BEATS_LOST).max(BEAT_LOST_MIN));
+        self.last_beat.is_some_and(|t| self.time - t < lost)
     }
 
-    /// The tempo while there is a beat, in beats per minute.
+    /// The tempo the horse gallops to, in beats per minute (with beat matching, while
+    /// there is a beat).
     pub fn bpm(&self) -> Option<f32> {
-        self.beats.bpm().filter(|_| self.hears_beat())
+        self.beats
+            .bpm()
+            .filter(|_| self.beat_match && self.hears_beat())
     }
 
     /// Strides per second for the tempo heard: one per beat, folded into a horse's pace.
+    /// From the second beat on, before the detector has worked out the tempo, it follows
+    /// the gap between the last two beats.
     fn tempo(&self) -> Option<f32> {
-        let mut pace = self.beats.bpm()? / 60.0;
+        let mut pace = 1.0 / self.beat_secs()?;
         while pace > PACE.1 {
             pace /= 2.0;
         }
@@ -310,13 +354,15 @@ impl Horse {
     }
 
     /// How far (in strides, -0.5..0.5) the horse is from landing, which should happen on a
-    /// beat. With two beats to a stride it may land on either.
+    /// beat. With two beats to a stride it may land on either. Beats are noticed a little
+    /// after they are heard, so by then the horse should be just past landing.
     fn off_beat(&self) -> f32 {
-        let per_stride = match (self.beats.bpm(), self.tempo()) {
-            (Some(bpm), Some(pace)) => (bpm / 60.0 / pace).round().max(1.0),
+        let per_stride = match (self.beat_secs(), self.tempo()) {
+            (Some(secs), Some(pace)) => (1.0 / secs / pace).round().max(1.0),
             _ => 1.0,
         };
-        ((self.stride * per_stride + 0.5).rem_euclid(1.0) - 0.5) / per_stride
+        let landed = self.stride - DETECT_LAG * self.tempo().unwrap_or(self.speed);
+        ((landed * per_stride + 0.5).rem_euclid(1.0) - 0.5) / per_stride
     }
 
     pub fn is_flying(&self) -> bool {
@@ -382,8 +428,8 @@ impl Horse {
             let px = bubble.px(2);
             let (left, low) = (px.x as f32, (px.y + px.h - 3) as f32);
             let mouth = (
-                plan.horse_x + plan.size * 0.98,
-                plan.home().1 - plan.size * 0.36,
+                plan.horse_x + plan.size * 0.95,
+                plan.ground - plan.size * 0.78,
             );
             let tip = (mouth.0.min(left - 2.0), mouth.1);
             pen.triangle((left + 1.0, low - 3.0), (left + 1.0, low), tip, BUBBLE);
@@ -405,7 +451,7 @@ impl Horse {
         let s = plan.size;
         // How far the ground has moved, in whole pixels: near things move with it, far
         // things slower.
-        let moved = (self.travelled * s * 1.3) as usize;
+        let moved = (self.travelled * s * GROUND) as usize;
 
         // Sky, and a rainbow over the meadow.
         for y in f.y..horizon {
@@ -523,7 +569,7 @@ impl Horse {
             Some(t) => {
                 // The horse shows until the first puff hides it, and after the last one.
                 if t < POOF_OUT.0 + (POOF_OUT.1 - POOF_OUT.0) * 0.5 || t > POOF_IN.0 + 0.05 {
-                    draw_horse(pen, plan, self.stride, self.amp(), self.clock);
+                    self.draw_horse(pen, plan);
                 }
                 let u = phase(t, FLIGHT);
                 if u > 0.0 && u < 1.0 {
@@ -547,10 +593,10 @@ impl Horse {
                     }
                 }
             }
-            None => draw_horse(pen, plan, self.stride, self.amp(), self.clock),
+            None => self.draw_horse(pen, plan),
         }
         // Sparkles on the beat: an amazing horse twinkles.
-        if self.trick.is_none() && self.beats.pulse > 0.3 && self.hears_beat() {
+        if self.trick.is_none() && self.kick > 0.25 {
             for i in 0..5u64 {
                 let n = self.beat_count * 5 + i;
                 if noise(n * 3 + 1) < 0.3 {
@@ -565,6 +611,23 @@ impl Horse {
                 }
             }
         }
+    }
+
+    /// The horse, with dust kicked up behind it on the beat.
+    fn draw_horse(&self, pen: &mut Pen<'_>, plan: &Plan) {
+        let (amp, kick) = (self.amp(), self.kick);
+        if kick > 0.05 && amp > 0.4 {
+            let (s, (x, _)) = (plan.size, plan.home());
+            let spread = 1.0 - kick;
+            for i in 0..4 {
+                let i = i as f32;
+                let r = s * (0.06 + 0.12 * spread) + 0.5;
+                let px = x - s * (0.45 + 0.7 * spread + 0.14 * i);
+                let py = plan.ground - s * (0.04 + 0.12 * spread + 0.05 * i);
+                pen.ellipse_with(px, py, r, r * 0.8, |_, _| Some((DUST, 0.75 * kick)));
+            }
+        }
+        draw_horse(pen, plan, self.stride, amp, kick, self.clock);
     }
 
     fn draw_plane(&self, pen: &mut Pen<'_>, plan: &Plan, u: f32) {
@@ -588,34 +651,189 @@ impl Horse {
     }
 }
 
-/// The horse, galloping (`amp` 1) or standing (0), facing right.
-fn draw_horse(pen: &mut Pen<'_>, plan: &Plan, stride: f32, amp: f32, clock: f32) {
+/// One leg of the gallop: where it hangs from the body, and when its hoof is down.
+struct Leg {
+    /// Along the body from its middle, in sizes (forward is positive).
+    along: f32,
+    front: bool,
+    /// On the near side: drawn in front of the body.
+    near: bool,
+    /// When in the stride its hoof strikes the ground, and for how much of the stride it
+    /// stays down.
+    strike: f32,
+    stance: f32,
+    /// How far forward of its shoulder or hip (in sizes) the hoof lands.
+    reach: f32,
+}
+
+/// How fast a hoof on the ground moves back past the body, in sizes per stride. The track
+/// goes by as fast, so hooves on the ground stay put.
+const GROUND: f32 = 1.6;
+
+/// A transverse gallop, timed after the classic twelve-phase chart (Muybridge's horse in
+/// motion): the first hind hoof lands on the beat (1), the second follows (3), the front
+/// legs land one after the other (4 and 7) while the hind legs trail behind, the last
+/// front hoof pushes off (10), and all four legs fold under the body in mid-air (11-12).
+const LEGS: [Leg; 4] = [
+    Leg {
+        along: -0.38,
+        front: false,
+        near: false,
+        strike: 0.0,
+        stance: 0.28,
+        reach: 0.1,
+    },
+    Leg {
+        along: 0.3,
+        front: true,
+        near: false,
+        strike: 0.25,
+        stance: 0.37,
+        reach: 0.25,
+    },
+    Leg {
+        along: -0.32,
+        front: false,
+        near: true,
+        strike: 0.12,
+        stance: 0.26,
+        reach: 0.08,
+    },
+    Leg {
+        along: 0.36,
+        front: true,
+        near: true,
+        strike: 0.5,
+        stance: 0.28,
+        reach: 0.22,
+    },
+];
+
+/// A smooth curve through `keys` (time 0-1, x, y), at time `t`.
+fn curve(keys: &[(f32, f32, f32)], t: f32) -> (f32, f32) {
+    let i = keys
+        .windows(2)
+        .position(|w| t <= w[1].0)
+        .unwrap_or(keys.len() - 2);
+    let (a, b) = (keys[i], keys[i + 1]);
+    // Catmull-Rom tangents (one-sided at the ends), for uneven key times.
+    let slope = |p: (f32, f32, f32), q: (f32, f32, f32)| {
+        let dt = (q.0 - p.0).max(1e-4);
+        ((q.1 - p.1) / dt, (q.2 - p.2) / dt)
+    };
+    let ta = if i > 0 {
+        slope(keys[i - 1], b)
+    } else {
+        slope(a, b)
+    };
+    let tb = keys.get(i + 2).map_or(slope(a, b), |&c| slope(a, c));
+    let h = (b.0 - a.0).max(1e-4);
+    let u = ((t - a.0) / h).clamp(0.0, 1.0);
+    let (u2, u3) = (u * u, u * u * u);
+    let (h00, h10, h01, h11) = (
+        2.0 * u3 - 3.0 * u2 + 1.0,
+        u3 - 2.0 * u2 + u,
+        -2.0 * u3 + 3.0 * u2,
+        u3 - u2,
+    );
+    (
+        h00 * a.1 + h10 * h * ta.0 + h01 * b.1 + h11 * h * tb.0,
+        h00 * a.2 + h10 * h * ta.1 + h01 * b.2 + h11 * h * tb.1,
+    )
+}
+
+/// Where a leg's hoof is at `stride` (0-1): how far forward of its shoulder or hip and how
+/// high off the ground, in sizes. While down it moves back as the body goes over it. Then
+/// a front leg curls up under the chest and reaches far forward to land; a hind leg trails
+/// up behind, folds and swings forward under the belly.
+fn hoof(leg: &Leg, stride: f32) -> (f32, f32) {
+    let since = (stride - leg.strike).rem_euclid(1.0);
+    let sweep = GROUND * leg.stance;
+    let off = leg.reach - sweep;
+    if since < leg.stance {
+        return (leg.reach - sweep * since / leg.stance, 0.0);
+    }
+    let k = (since - leg.stance) / (1.0 - leg.stance);
+    let keys: [(f32, f32, f32); 5] = if leg.front {
+        [
+            (0.0, off, 0.0),
+            (0.3, -0.08, 0.36),
+            (0.55, 0.12, 0.3),
+            (0.8, leg.reach + 0.2, 0.18),
+            (1.0, leg.reach, 0.0),
+        ]
+    } else {
+        [
+            (0.0, off, 0.0),
+            (0.28, off - 0.06, 0.22),
+            (0.62, -0.12, 0.28),
+            (0.86, leg.reach + 0.06, 0.12),
+            (1.0, leg.reach, 0.0),
+        ]
+    };
+    let (x, up) = curve(&keys, k);
+    (x, up.max(0.0))
+}
+
+/// The knee of a leg from `top` to `hoof`, `upper` and `lower` long, bending forward (front
+/// legs) or back (hind legs, at the hock); and the hoof, pulled in if out of reach.
+fn knee(
+    top: (f32, f32),
+    hoof: (f32, f32),
+    upper: f32,
+    lower: f32,
+    forward: bool,
+) -> [(f32, f32); 2] {
+    let (dx, dy) = (hoof.0 - top.0, hoof.1 - top.1);
+    let reach = (dx * dx + dy * dy).sqrt().max(1e-4);
+    let d = reach.clamp((upper - lower).abs() + 0.01, (upper + lower) * 0.999);
+    let theta = dy.atan2(dx);
+    let bend = ((upper * upper + d * d - lower * lower) / (2.0 * upper * d))
+        .clamp(-1.0, 1.0)
+        .acos();
+    let a = if forward { theta - bend } else { theta + bend };
+    [
+        (top.0 + a.cos() * upper, top.1 + a.sin() * upper),
+        (top.0 + dx / reach * d, top.1 + dy / reach * d),
+    ]
+}
+
+/// The horse, galloping (`amp` 1) or standing (0), facing right. `kick` (1 on a beat)
+/// tosses its head and mane.
+fn draw_horse(pen: &mut Pen<'_>, plan: &Plan, stride: f32, amp: f32, kick: f32, clock: f32) {
     let s = plan.size;
-    let (cx, stand) = plan.home();
-    // Lowest, landing with the head down, at the start of the stride (on the beat); up in
-    // the air half way.
-    let bob = -(0.5 - 0.5 * (TAU * stride).cos()) * 0.07 * s * amp;
-    let cy = stand + bob;
-    let nod = (TAU * stride).cos() * 0.04 * s * amp;
-    let (upper, lower) = (0.3 * s, 0.3 * s);
-    // (where along the body, step in the stride, front leg, near side)
-    let legs = [
-        (-0.36, 0.0, false, false),
-        (0.3, 0.45, true, false),
-        (-0.3, 0.1, false, true),
-        (0.36, 0.55, true, true),
-    ];
-    let leg = |pen: &mut Pen<'_>, (along, step, front, near): (f32, f32, bool, bool)| {
-        let a = TAU * (stride + step);
-        let swing = a.sin() * 0.6 * amp;
-        let bend = a.cos().max(0.0) * if front { 1.2 } else { 0.7 } * amp;
-        let top = (cx + along * s, cy + 0.12 * s);
-        let knee = (top.0 + swing.sin() * upper, top.1 + swing.cos() * upper);
-        let low = swing - bend;
-        let hoof = (knee.0 + low.sin() * lower, knee.1 + low.cos() * lower);
-        let color = if near { COAT } else { COAT_FAR };
-        pen.stroke(top.0, top.1, knee.0, knee.1, 0.08 * s, 0.055 * s, color);
-        pen.stroke(knee.0, knee.1, hoof.0, hoof.1, 0.05 * s, 0.045 * s, color);
+    let (cx, ground) = (plan.horse_x, plan.ground);
+    // Highest in mid-air, coming down onto the hind legs and lowest over the front legs;
+    // the forehand up while the hind legs push, down as the front legs land.
+    let rise = 0.5 - 0.5 * (TAU * (stride - 0.45)).cos();
+    let pitch = (0.08 * (TAU * (stride - 0.15)).cos() + 0.03 * kick) * amp;
+    let height = lerp(0.62, 0.56, amp) + 0.05 * rise * amp;
+    let cy = ground - (0.1 + height) * s;
+    let (sin, cos) = pitch.sin_cos();
+    // A point `along` the body and `up` from its middle, in sizes, rocked by the pitch.
+    let at = |along: f32, up: f32| {
+        (
+            cx + (along * cos - up * sin) * s,
+            cy - (along * sin + up * cos) * s,
+        )
+    };
+    let flick = 0.5 + amp + 1.5 * kick;
+
+    let leg = |pen: &mut Pen<'_>, leg: &Leg| {
+        let top = at(leg.along, -0.1);
+        let (upper, lower) = if leg.front {
+            (0.32, 0.35)
+        } else {
+            (0.34, 0.34)
+        };
+        let (dx, up) = hoof(leg, stride);
+        let stand = if leg.front { 0.03 } else { -0.03 };
+        let target = (top.0 + lerp(stand, dx, amp) * s, ground - up * amp * s);
+        let [knee, hoof] = knee(top, target, upper * s, lower * s, leg.front);
+        let color = if leg.near { COAT } else { COAT_FAR };
+        let thick = if leg.front { 0.085 } else { 0.11 };
+        pen.stroke(top.0, top.1, knee.0, knee.1, thick * s, 0.05 * s, color);
+        pen.stroke(knee.0, knee.1, hoof.0, hoof.1, 0.048 * s, 0.04 * s, color);
         pen.ellipse(
             hoof.0,
             hoof.1 - 0.02 * s,
@@ -624,77 +842,81 @@ fn draw_horse(pen: &mut Pen<'_>, plan: &Plan, stride: f32, amp: f32, clock: f32)
             HOOF,
         );
     };
-    for l in legs.iter().filter(|l| !l.3) {
-        leg(pen, *l);
+    for l in LEGS.iter().filter(|l| !l.near) {
+        leg(pen, l);
     }
-    // The tail: a streaming rainbow.
-    let mut last = (cx - 0.5 * s, cy - 0.12 * s);
-    for k in 1..=8 {
+    // The tail streams back, a rainbow.
+    let mut last = at(-0.5, 0.12);
+    for k in 1..=10 {
         let kf = k as f32;
-        let wave = (clock * 6.0 + kf * 0.7).sin() * 0.025 * s * kf * (0.4 + amp);
+        let wave = (clock * 7.0 + kf * 0.6).sin() * 0.012 * s * kf * flick;
         let next = (
-            cx - 0.5 * s - kf * 0.06 * s,
-            cy - 0.12 * s + kf * 0.035 * s * (1.4 - amp) + wave,
+            last.0 - 0.07 * s,
+            last.1 + (0.035 - 0.03 * amp) * s + wave * 0.3,
         );
-        let r = 0.065 * s * (1.0 - kf / 12.0);
-        pen.stroke(
-            last.0,
-            last.1,
-            next.0,
-            next.1,
-            r,
-            r,
-            hsv(kf / 8.0, 0.75, 1.0),
-        );
+        let r = 0.075 * s * (1.0 - kf / 14.0);
+        let c = hsv(kf / 10.0, 0.75, 1.0);
+        pen.stroke(last.0, last.1 + wave, next.0, next.1 + wave, r, r, c);
         last = next;
     }
     // Body: belly in shade, rounder at the chest and rump.
-    let body = |r: f32, a: f32| Some((mix(COAT, COAT_SHADE, (a.sin() * r).max(0.0) * 0.9), 1.0));
-    pen.ellipse_with(cx - 0.33 * s, cy - 0.03 * s, 0.21 * s, 0.22 * s, body);
-    pen.ellipse_with(cx + 0.3 * s, cy - 0.02 * s, 0.21 * s, 0.22 * s, body);
-    pen.ellipse_with(cx, cy, 0.5 * s, 0.21 * s, body);
-    // Neck and head.
-    let (hx, hy) = (cx + 0.74 * s, cy - 0.5 * s + nod);
-    pen.stroke(
-        cx + 0.32 * s,
-        cy - 0.06 * s,
-        cx + 0.6 * s,
-        hy - 0.04 * s,
-        0.17 * s,
-        0.1 * s,
-        COAT,
+    let body = |_: f32, v: f32| Some(mix(COAT, COAT_SHADE, ((v - 0.1) * 1.4).clamp(0.0, 1.0)));
+    let rump = at(-0.33, 0.04);
+    pen.ellipse_turned(rump.0, rump.1, 0.22 * s, 0.23 * s, -pitch, body);
+    let chest = at(0.3, 0.02);
+    pen.ellipse_turned(chest.0, chest.1, 0.2 * s, 0.22 * s, -pitch, body);
+    pen.ellipse_turned(cx, cy, 0.5 * s, 0.2 * s, -pitch, body);
+    // The neck reaches forward at a gallop and rises when standing; the head nods down on
+    // the beat.
+    let base = at(0.32, 0.06);
+    let neck = lerp(0.95, 0.62, amp) + 0.6 * pitch - 0.1 * kick * amp;
+    let poll = (
+        base.0 + neck.cos() * 0.42 * s,
+        base.1 - neck.sin() * 0.42 * s,
     );
-    pen.ellipse_turned(hx, hy, 0.2 * s, 0.095 * s, 0.6, |u, _| {
+    pen.stroke(base.0, base.1, poll.0, poll.1, 0.18 * s, 0.1 * s, COAT);
+    let tilt = lerp(1.05, 0.75, amp) - 0.4 * pitch + 0.15 * kick * amp;
+    let (ts, tc) = tilt.sin_cos();
+    let head = (poll.0 + tc * 0.17 * s, poll.1 + ts * 0.17 * s);
+    pen.ellipse_turned(head.0, head.1, 0.2 * s, 0.085 * s, tilt, |u, _| {
         Some(if u > 0.55 { MUZZLE } else { COAT })
     });
+    // Ears laid back at a gallop.
+    let ear = lerp(0.0, 0.07, amp) * s;
     pen.triangle(
-        (hx - 0.13 * s, hy - 0.08 * s),
-        (hx - 0.05 * s, hy - 0.1 * s),
-        (hx - 0.12 * s, hy - 0.24 * s),
+        (poll.0 - 0.03 * s, poll.1 - 0.02 * s),
+        (poll.0 + 0.04 * s, poll.1 - 0.04 * s),
+        (poll.0 - 0.02 * s - ear, poll.1 - 0.16 * s + ear * 0.5),
         COAT,
     );
-    pen.put((hx - 0.04 * s) as i64, (hy - 0.05 * s) as i64, EYE);
-    // A rainbow mane down the neck, blowing back.
-    for k in 0..6 {
-        let kf = k as f32 / 5.0;
+    let eye = (
+        head.0 - tc * 0.05 * s + ts * 0.03 * s,
+        head.1 - ts * 0.05 * s - tc * 0.03 * s,
+    );
+    pen.put(eye.0 as i64, eye.1 as i64, EYE);
+    // The mane streams back from the crest of the neck.
+    let crest = (-neck.sin(), -neck.cos());
+    for k in 0..7 {
+        let kf = k as f32 / 6.0;
+        let r = lerp(0.1, 0.18, kf) * 0.85 * s;
         let (bx, by) = (
-            lerp(hx - 0.12 * s, cx + 0.3 * s, kf),
-            lerp(hy - 0.12 * s, cy - 0.17 * s, kf),
+            lerp(poll.0, base.0, kf) + crest.0 * r,
+            lerp(poll.1, base.1, kf) + crest.1 * r,
         );
-        let wave = (clock * 7.0 + k as f32).sin() * 0.03 * s * (0.5 + amp);
+        let wave = (clock * 9.0 + k as f32).sin() * 0.04 * s * flick;
         let c = hsv(kf * 0.85, 0.75, 1.0);
         pen.stroke(
             bx,
             by,
-            bx - 0.15 * s,
-            by + 0.02 * s + wave,
+            bx - 0.24 * s,
+            by - 0.03 * s + wave,
             0.05 * s,
-            0.03 * s,
+            0.025 * s,
             c,
         );
     }
-    for l in legs.iter().filter(|l| l.3) {
-        leg(pen, *l);
+    for l in LEGS.iter().filter(|l| l.near) {
+        leg(pen, l);
     }
 }
 
@@ -840,6 +1062,7 @@ mod tests {
     /// Plays `secs` of music with a kick every `period` seconds (or none), at 60 fps.
     /// Returns how far off the beat the horse was at each kick after the first 4 s.
     fn ride(horse: &mut Horse, from: f32, secs: f32, period: Option<f32>) -> Vec<f32> {
+        horse.beat_match = true;
         let dt = 1.0 / 60.0;
         let mut offs = Vec::new();
         for frame in 0..(secs / dt) as usize {
@@ -853,6 +1076,32 @@ mod tests {
             }
         }
         offs
+    }
+
+    #[test]
+    fn by_default_it_gallops_fast_and_ignores_the_beat() {
+        let mut horse = Horse::default();
+        assert!(!horse.beat_match);
+        horse.reset(Some(1));
+        let dt = 1.0 / 60.0;
+        for frame in 0..240 {
+            let t = frame as f32 * dt;
+            horse.update(dt, Some(1), true, kick(t, 0.5));
+        }
+        assert!((horse.speed - STEADY).abs() < 0.01, "{}", horse.speed);
+        assert_eq!(horse.bpm(), None, "no tempo shown");
+        assert!(horse.amp() >= 1.0);
+        // It kicks up dust on every landing: 2.5 strides a second.
+        let before = horse.beat_count;
+        for _ in 0..120 {
+            horse.update(dt, Some(1), true, 0.6);
+        }
+        assert_eq!(horse.beat_count - before, 5);
+        // Paused, it stands.
+        for _ in 0..120 {
+            horse.update(dt, Some(1), false, 0.6);
+        }
+        assert!(!horse.is_active());
     }
 
     #[test]
@@ -875,6 +1124,96 @@ mod tests {
     }
 
     #[test]
+    fn the_second_beat_sets_the_pace_and_every_beat_kicks() {
+        let mut horse = Horse::default();
+        horse.reset(Some(1));
+        // A slow 90 BPM song: three beats in, the detector has no tempo yet.
+        ride(&mut horse, 0.0, 1.7, Some(60.0 / 90.0));
+        assert_eq!(horse.beats.bpm(), None);
+        let pace = horse.tempo().expect("pace from the gap between beats");
+        assert!((pace - 1.5).abs() < 0.05, "{pace} strides/s");
+        assert!((horse.speed - pace).abs() < 0.2, "already galloping at it");
+        // A beat kicks: dust, a mane flick and sparkles.
+        let dt = 1.0 / 60.0;
+        let mut t = 1.7;
+        while horse.kick < 0.9 {
+            horse.update(dt, Some(1), true, kick(t, 60.0 / 90.0));
+            t += dt;
+        }
+        for _ in 0..12 {
+            horse.update(dt, Some(1), true, 0.5);
+        }
+        assert!(horse.kick < 0.3, "the kick fades within a beat");
+    }
+
+    #[test]
+    fn the_hooves_go_down_in_the_order_of_the_gallop_chart() {
+        // LEGS: first hind, first front, second hind, second front.
+        let down = |p: f32| LEGS.each_ref().map(|l| hoof(l, p).1 == 0.0);
+        assert_eq!(
+            down(0.02),
+            [true, false, false, false],
+            "1: first hind lands"
+        );
+        assert_eq!(down(0.2), [true, false, true, false], "3: both hind legs");
+        assert_eq!(down(0.3), [false, true, true, false], "4-5: hind and front");
+        assert_eq!(
+            down(0.55),
+            [false, true, false, true],
+            "7-8: both front legs"
+        );
+        assert_eq!(
+            down(0.7),
+            [false, false, false, true],
+            "9-10: last push off"
+        );
+        assert_eq!(down(0.85), [false; 4], "11: in mid-air");
+        // In mid-air the legs are folded up under the body.
+        for l in &LEGS {
+            let (dx, up) = hoof(l, 0.88);
+            assert!(up > 0.05 && dx.abs() < 0.3, "{dx} {up}");
+        }
+        // A front leg reaches far forward before it lands (5-6).
+        let (dx, up) = hoof(&LEGS[3], 0.4);
+        assert!(dx > LEGS[3].reach && up > 0.1, "{dx} {up}");
+        // A hoof on the ground moves back as fast as the track goes by, and the path is
+        // continuous where it lands and takes off.
+        for l in &LEGS {
+            let (a, _) = hoof(l, l.strike + 0.02);
+            let (b, _) = hoof(l, l.strike + 0.12);
+            assert!(((a - b) / 0.1 - GROUND).abs() < 1e-3);
+            for p in [l.strike, l.strike + l.stance] {
+                let (x0, y0) = hoof(l, p - 1e-3);
+                let (x1, y1) = hoof(l, p + 1e-3);
+                assert!(
+                    (x0 - x1).abs() < 0.01 && (y0 - y1).abs() < 0.01,
+                    "jump at {p}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hooves_on_the_ground_stay_within_reach() {
+        let plan = Plan::new(120, 28).unwrap();
+        let s = plan.size;
+        for i in 0..100 {
+            let stride = i as f32 / 100.0;
+            let rise = 0.5 - 0.5 * (TAU * (stride - 0.45)).cos();
+            let pitch = 0.08 * (TAU * (stride - 0.15)).cos();
+            let cy = plan.ground - (0.1 + 0.56 + 0.05 * rise) * s;
+            for l in LEGS.iter().filter(|l| hoof(l, stride).1 == 0.0) {
+                let (dx, _) = hoof(l, stride);
+                let top_y = cy - (l.along * pitch.sin() - 0.1 * pitch.cos()) * s;
+                let top_x = plan.horse_x + (l.along * pitch.cos() + 0.1 * pitch.sin()) * s;
+                let length = if l.front { 0.67 } else { 0.68 } * s;
+                let d = ((top_x + dx * s - top_x).powi(2) + (plan.ground - top_y).powi(2)).sqrt();
+                assert!(d <= length, "stride {stride}: hoof {d} of {length} away");
+            }
+        }
+    }
+
+    #[test]
     fn fast_music_is_a_stride_every_two_beats() {
         let mut horse = Horse::default();
         horse.reset(Some(1));
@@ -892,8 +1231,10 @@ mod tests {
         horse.reset(Some(1));
         ride(&mut horse, 0.0, 6.0, Some(0.5));
         assert!(horse.speed > 1.8);
-        // The beat stops: within a few seconds it walks.
-        ride(&mut horse, 6.0, 5.0, None);
+        // The beat stops: three beats later it slows down, and soon walks.
+        ride(&mut horse, 6.0, 1.3, None);
+        assert!(horse.speed < 1.5, "{}", horse.speed);
+        ride(&mut horse, 7.3, 1.2, None);
         assert!((horse.speed - WALK).abs() < 0.05, "{}", horse.speed);
         assert_eq!(horse.bpm(), None);
         assert!(horse.amp() < 0.4);
